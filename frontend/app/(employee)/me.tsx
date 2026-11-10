@@ -3,26 +3,22 @@ import { RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/src/auth";
-import { Breakdown, BonusHero, DailyChart, KpiSection } from "@/src/components/report-view";
-import { currentMonth } from "@/src/format";
+import { currentMonth, money, num } from "@/src/format";
 import { useApi } from "@/src/hooks";
 import { usesNativeTabs } from "@/src/navigation";
 import { useTheme } from "@/src/theme";
-import { Report } from "@/src/types";
-import { EmptyState, ErrorView, Header, Loading, MonthSwitcher, S, SyncBadge } from "@/src/ui";
+import { SheetParams, SheetRow, PERF_TYPE_LABEL } from "@/src/types";
+import { Card, EmptyState, ErrorView, Header, LineItem, Loading, MonthSwitcher, Pill, ProgressBar, S, SyncBadge, T } from "@/src/ui";
 
-export function useMyReport(month: string) {
-  const { user } = useAuth();
-  return useApi<Report>(user?.employee_id ? `/me/report?month=${month}` : null);
-}
+const pct = (v: number | null) => (v === null ? "—" : `${num(v * 100, 1)}%`);
 
 export default function MyPerformance() {
   const { user } = useAuth();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [month, setMonth] = useState(currentMonth());
-  const q = useMyReport(month);
-  const r = q.data;
+  const q = useApi<{ month: string; row: SheetRow; params: SheetParams }>(user?.employee_id ? `/me/sheet?month=${month}` : null);
+  const r = q.data?.row;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
@@ -36,13 +32,30 @@ export default function MyPerformance() {
       ) : r ? (
         <ScrollView contentContainerStyle={{ padding: S.lg, gap: S.lg, paddingBottom: (usesNativeTabs ? insets.bottom : 0) + S.xl }} refreshControl={<RefreshControl refreshing={q.refreshing} onRefresh={q.refresh} tintColor={colors.brandPrimary} />}>
           <MonthSwitcher month={month} onChange={setMonth} />
-          <BonusHero r={r} currency={r.currency} />
-          {r.days_recorded === 0 ? <EmptyState icon="cash-outline" title="لم يتم احتساب المردودية بعد" subtitle="لا توجد بيانات أداء مسجلة لهذا الشهر" /> : null}
-          <KpiSection r={r} />
-          <DailyChart r={r} />
-          <Breakdown r={r} currency={r.currency} />
+          <Card style={{ gap: S.sm }} testID="bonus-hero-card">
+            <T variant="label">المنحة المستحقة — {PERF_TYPE_LABEL[r.perf_type]}</T>
+            <T testID="final-bonus-value" variant="num">{r.t === null ? "—" : money(r.t)}</T>
+            <Row2 label="نتيجة الأداء" value={pct(r.q)} />
+            <ProgressBar value={r.q ?? 0} />
+            <Pill label={r.status || "—"} tone={r.status === "✔" ? "success" : "warning"} />
+          </Card>
+          <Card style={{ gap: 0 }}>
+            <T variant="h2" style={{ paddingBottom: S.sm }}>تفاصيل الحساب</T>
+            <LineItem label="الهندام والنظافة" value={r.hygiene === null ? "—" : `${num(r.hygiene * 100, 1)}% (معامل ${r.c === null ? "—" : num(r.c, 3)})`} />
+            <LineItem label="الاحترام" value={r.respect ? `${r.respect} (معامل ${r.e === null ? "—" : num(r.e, 3)})` : "—"} />
+            <LineItem label="الخسائر" value={r.losses === null ? "—" : `${money(r.losses)} (معامل ${r.g === null ? "—" : num(r.g, 3)})`} />
+            <LineItem label="التأخرات والغيابات" value={r.days === null ? "—" : `${num(r.days)} يوم (معامل ${r.i === null ? "—" : num(r.i, 3)})`} />
+            <LineItem label="مضاعف الأداء" value={pct(r.r)} />
+            <LineItem label="المنحة القصوى" value={r.s === null ? "—" : money(r.s)} />
+            <LineItem label="المنحة المستحقة" value={r.t === null ? "—" : money(r.t)} strong />
+            <LineItem label="مخالفات الشهر" value={String(r.violations)} tone={r.violations ? "error" : "muted"} />
+          </Card>
         </ScrollView>
       ) : null}
     </View>
   );
+}
+
+function Row2({ label, value }: { label: string; value: string }) {
+  return <LineItem label={label} value={value} strong />;
 }

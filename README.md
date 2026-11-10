@@ -198,3 +198,10 @@ local-run notes above.
 - Protected, never edit (relative to the app dir): `metro.config.js`,
   `scripts/**`, `tsconfig.json`, `eslint.config.js`, the platform keys in
   `.env`, and `backend/pytest.ini`. Never create `eas.json`.
+
+## جدول الأداء والمردودية وسجل المخالفات (نموذج Excel المعتمد)
+
+- `backend/sheet_engine.py`: محرك الحساب (دوال نقية) المطابق لمعادلات ملف «جدول الأداء والمردودية المبسط»؛ `backend/tests/test_sheet_engine.py` يقارنه بحالات محسوبة بالإكسل نفسه (`sheet_golden.json`).
+- الواجهة: تبويب «الأداء» (الجدول الشهري)، «المخالفات» (سجل التفتيش)، وإعدادات ← «معاملات جدول الأداء».
+- الأدوار: `admin` (المسير: كل شيء)، `inspector` (المراقب: يملأ النتائج والمخالفات، لا يرى المبالغ بالدينار)، `employee` (يرى نتيجته ومنحته).
+- حساب المراقب الافتراضي: `inspector@company.dz` / `Inspector@123` (متغيرا البيئة `INSPECTOR_EMAIL` و`INSPECTOR_PASSWORD`).

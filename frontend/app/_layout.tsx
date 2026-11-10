@@ -37,8 +37,9 @@ function Gate() {
       if (first !== "login") router.replace("/login");
       return;
     }
-    const home = (user.role === "admin" ? "/" : "/me") as any;
-    if (!first || first === "login" || (user.role === "employee" && ADMIN_AREAS.includes(first)) || (user.role === "admin" && first === "(employee)")) {
+    const staff = user.role === "admin" || user.role === "inspector";
+    const home = (user.role === "admin" ? "/" : user.role === "inspector" ? "/sheet" : "/me") as any;
+    if (!first || first === "login" || (!staff && ADMIN_AREAS.includes(first)) || (staff && first === "(employee)")) {
       router.replace(home);
     }
   }, [user, loading, segments, router]);

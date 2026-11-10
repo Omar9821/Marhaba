@@ -1,0 +1,1410 @@
+[
+ {
+  "params": {
+   "pass_threshold": 0.85,
+   "w_hygiene": 0.06,
+   "w_respect": 0.04,
+   "loss_limit": 20000,
+   "w_loss": 0.12,
+   "days_limit": 4,
+   "w_days": 0.08,
+   "rate_commercial": 0.004,
+   "share_commercial": 0.4,
+   "rate_finance": 0.008,
+   "share_finance": 0.4,
+   "price_meter": 0,
+   "share_cutting": 0.4,
+   "fund_ratio": 1,
+   "pool_rate": 0.01
+  },
+  "turnover": 4000000,
+  "rows": [
+   {
+    "name": "emp0",
+    "perf_type": "pool",
+    "hygiene": 0.9,
+    "respect": "نعم",
+    "losses": 35000,
+    "days": 4,
+    "base": null,
+    "post_weight": 1
+   },
+   {
+    "name": "emp1",
+    "perf_type": "finance",
+    "hygiene": 1,
+    "respect": null,
+    "losses": null,
+    "days": 2,
+    "base": 800000,
+    "post_weight": 1.5
+   },
+   {
+    "name": "emp2",
+    "perf_type": "finance",
+    "hygiene": null,
+    "respect": "لا",
+    "losses": 20000,
+    "days": 2,
+    "base": 0,
+    "post_weight": 3
+   },
+   {
+    "name": "emp3",
+    "perf_type": "finance",
+    "hygiene": 1,
+    "respect": null,
+    "losses": null,
+    "days": null,
+    "base": null,
+    "post_weight": 1
+   },
+   {
+    "name": "emp4",
+    "perf_type": "finance",
+    "hygiene": 0.9,
+    "respect": "نعم",
+    "losses": 20000,
+    "days": 4,
+    "base": null,
+    "post_weight": 1
+   },
+   {
+    "name": "emp5",
+    "perf_type": "pool",
+    "hygiene": 0.5,
+    "respect": "لا",
+    "losses": 3000,
+    "days": 2,
+    "base": null,
+    "post_weight": null
+   },
+   {
+    "name": "emp6",
+    "perf_type": "commercial",
+    "hygiene": 0.9,
+    "respect": "لا",
+    "losses": null,
+    "days": 6,
+    "base": 2500000,
+    "post_weight": 1.5
+   },
+   {
+    "name": "emp7",
+    "perf_type": "cutting",
+    "hygiene": null,
+    "respect": null,
+    "losses": 35000,
+    "days": null,
+    "base": 450,
+    "post_weight": 2
+   },
+   {
+    "name": "emp8",
+    "perf_type": "commercial",
+    "hygiene": null,
+    "respect": "لا",
+    "losses": null,
+    "days": 0,
+    "base": 1500000,
+    "post_weight": 1
+   },
+   {
+    "name": "emp9",
+    "perf_type": "commercial",
+    "hygiene": 0.9,
+    "respect": "نعم",
+    "losses": null,
+    "days": 4,
+    "base": 2500000,
+    "post_weight": 1
+   },
+   {
+    "name": "emp10",
+    "perf_type": "cutting",
+    "hygiene": 0.85,
+    "respect": null,
+    "losses": 20000,
+    "days": null,
+    "base": null,
+    "post_weight": 1
+   },
+   {
+    "name": "emp11",
+    "perf_type": "finance",
+    "hygiene": 0.9,
+    "respect": "نعم",
+    "losses": 0,
+    "days": 6,
+    "base": null,
+    "post_weight": 3
+   },
+   {
+    "name": "emp12",
+    "perf_type": "finance",
+    "hygiene": 0.5,
+    "respect": "نعم",
+    "losses": 20000,
+    "days": null,
+    "base": 2500000,
+    "post_weight": 2
+   }
+  ],
+  "expected": [
+   {
+    "c": 0.06,
+    "e": 0.04,
+    "g": 0,
+    "i": 0,
+    "q": 0.333333333333333,
+    "r": 0.333333333333333,
+    "s": 5714.28571428572,
+    "t": 1904.76190476191,
+    "u": 3809.52380952381,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": null,
+    "g": null,
+    "i": 0.04,
+    "q": 0.714285714285714,
+    "r": 0.885714285714286,
+    "s": 6400,
+    "t": 5668.57142857143,
+    "u": 731.428571428572,
+    "status": "✔"
+   },
+   {
+    "c": null,
+    "e": 0,
+    "g": 0,
+    "i": 0.04,
+    "q": 0.166666666666667,
+    "r": 0.666666666666667,
+    "s": 0,
+    "t": 0,
+    "u": 0,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": null,
+    "g": null,
+    "i": null,
+    "q": 1,
+    "r": 1,
+    "s": 5714.28571428572,
+    "t": 5714.28571428572,
+    "u": 0,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": 0.04,
+    "g": 0,
+    "i": 0,
+    "q": 0.333333333333333,
+    "r": 0.333333333333333,
+    "s": 5714.28571428572,
+    "t": 1904.76190476191,
+    "u": 3809.52380952381,
+    "status": "✔"
+   },
+   {
+    "c": 0,
+    "e": 0,
+    "g": 0.102,
+    "i": 0.04,
+    "q": 0.473333333333333,
+    "r": 0.473333333333333,
+    "s": null,
+    "t": null,
+    "u": null,
+    "status": "أدخل وزن المنصب"
+   },
+   {
+    "c": 0.06,
+    "e": 0,
+    "g": null,
+    "i": 0,
+    "q": 0.333333333333333,
+    "r": 0.733333333333333,
+    "s": 10000,
+    "t": 7333.33333333333,
+    "u": 2666.66666666667,
+    "status": "✔"
+   },
+   {
+    "c": null,
+    "e": null,
+    "g": 0,
+    "i": null,
+    "q": 0,
+    "r": 0.6,
+    "s": 0,
+    "t": 0,
+    "u": 0,
+    "status": "حدّد النسبة / سعر المتر في صف المعاملات"
+   },
+   {
+    "c": null,
+    "e": 0,
+    "g": null,
+    "i": 0.08,
+    "q": 0.666666666666667,
+    "r": 0.866666666666667,
+    "s": 6000,
+    "t": 5200,
+    "u": 800,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": 0.04,
+    "g": null,
+    "i": 0,
+    "q": 0.555555555555556,
+    "r": 0.822222222222222,
+    "s": 10000,
+    "t": 8222.22222222222,
+    "u": 1777.77777777778,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": null,
+    "g": 0,
+    "i": null,
+    "q": 0.333333333333333,
+    "r": 0.333333333333333,
+    "s": 5714.28571428572,
+    "t": 1904.7619047619,
+    "u": 3809.52380952381,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": 0.04,
+    "g": 0.12,
+    "i": 0,
+    "q": 0.733333333333333,
+    "r": 0.733333333333333,
+    "s": 17142.8571428571,
+    "t": 12571.4285714286,
+    "u": 4571.42857142857,
+    "status": "✔"
+   },
+   {
+    "c": 0,
+    "e": 0.04,
+    "g": 0,
+    "i": null,
+    "q": 0.181818181818182,
+    "r": 0.672727272727273,
+    "s": 20000,
+    "t": 13454.5454545455,
+    "u": 6545.45454545455,
+    "status": "✔"
+   }
+  ],
+  "expected_totals": {
+   "gross": 92400,
+   "payable": 63878.6724386724,
+   "gap": 28521.3275613276,
+   "fund": 28521.3275613276,
+   "company_keeps": 0
+  },
+  "expected_pool": 40000,
+  "expected_pool_w": 7
+ },
+ {
+  "params": {
+   "pass_threshold": 0.85,
+   "w_hygiene": 0.06,
+   "w_respect": 0.04,
+   "loss_limit": 20000,
+   "w_loss": 0.12,
+   "days_limit": 4,
+   "w_days": 0.08,
+   "rate_commercial": 0.004,
+   "share_commercial": 0.4,
+   "rate_finance": 0.008,
+   "share_finance": 0.4,
+   "price_meter": 0,
+   "share_cutting": 0.4,
+   "fund_ratio": 1,
+   "pool_rate": 0.01
+  },
+  "turnover": 9000000,
+  "rows": [
+   {
+    "name": "emp0",
+    "perf_type": "commercial",
+    "hygiene": 1,
+    "respect": "نعم",
+    "losses": null,
+    "days": 0,
+    "base": 1500000,
+    "post_weight": 1
+   },
+   {
+    "name": "emp1",
+    "perf_type": "pool",
+    "hygiene": 1,
+    "respect": "لا",
+    "losses": 35000,
+    "days": null,
+    "base": null,
+    "post_weight": null
+   },
+   {
+    "name": "emp2",
+    "perf_type": "finance",
+    "hygiene": null,
+    "respect": "لا",
+    "losses": 3000,
+    "days": 1,
+    "base": 450,
+    "post_weight": 2
+   },
+   {
+    "name": "emp3",
+    "perf_type": "commercial",
+    "hygiene": 1,
+    "respect": "لا",
+    "losses": 0,
+    "days": null,
+    "base": null,
+    "post_weight": 3
+   },
+   {
+    "name": "emp4",
+    "perf_type": "cutting",
+    "hygiene": 0.5,
+    "respect": "لا",
+    "losses": 20000,
+    "days": 4,
+    "base": 1500000,
+    "post_weight": 1
+   },
+   {
+    "name": "emp5",
+    "perf_type": "pool",
+    "hygiene": 0.5,
+    "respect": "لا",
+    "losses": 0,
+    "days": 1,
+    "base": null,
+    "post_weight": 1
+   },
+   {
+    "name": "emp6",
+    "perf_type": "pool",
+    "hygiene": 0.5,
+    "respect": "لا",
+    "losses": 0,
+    "days": 0,
+    "base": null,
+    "post_weight": 3
+   },
+   {
+    "name": "emp7",
+    "perf_type": "finance",
+    "hygiene": 1,
+    "respect": null,
+    "losses": 20000,
+    "days": null,
+    "base": 2500000,
+    "post_weight": null
+   },
+   {
+    "name": "emp8",
+    "perf_type": "commercial",
+    "hygiene": 0.85,
+    "respect": null,
+    "losses": 20000,
+    "days": 1,
+    "base": 0,
+    "post_weight": 2
+   }
+  ],
+  "expected": [
+   {
+    "c": 0.06,
+    "e": 0.04,
+    "g": null,
+    "i": 0.08,
+    "q": 1,
+    "r": 1,
+    "s": 6000,
+    "t": 6000,
+    "u": 0,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": 0,
+    "g": 0,
+    "i": null,
+    "q": 0.272727272727273,
+    "r": 0.272727272727273,
+    "s": null,
+    "t": null,
+    "u": null,
+    "status": "أدخل وزن المنصب"
+   },
+   {
+    "c": null,
+    "e": 0,
+    "g": 0.102,
+    "i": 0.06,
+    "q": 0.675,
+    "r": 0.87,
+    "s": 3.6,
+    "t": 3.132,
+    "u": 0.468,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": 0,
+    "g": 0.12,
+    "i": null,
+    "q": 0.818181818181818,
+    "r": 0.818181818181818,
+    "s": 38571.4285714286,
+    "t": 31558.4415584416,
+    "u": 7012.98701298701,
+    "status": "✔"
+   },
+   {
+    "c": 0,
+    "e": 0,
+    "g": 0,
+    "i": 0,
+    "q": 0,
+    "r": 0.6,
+    "s": 0,
+    "t": 0,
+    "u": 0,
+    "status": "حدّد النسبة / سعر المتر في صف المعاملات"
+   },
+   {
+    "c": 0,
+    "e": 0,
+    "g": 0.12,
+    "i": 0.06,
+    "q": 0.6,
+    "r": 0.6,
+    "s": 12857.1428571429,
+    "t": 7714.28571428571,
+    "u": 5142.85714285714,
+    "status": "✔"
+   },
+   {
+    "c": 0,
+    "e": 0,
+    "g": 0.12,
+    "i": 0.08,
+    "q": 0.666666666666667,
+    "r": 0.666666666666667,
+    "s": 38571.4285714286,
+    "t": 25714.2857142857,
+    "u": 12857.1428571429,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": null,
+    "g": 0,
+    "i": null,
+    "q": 0.333333333333333,
+    "r": 0.733333333333333,
+    "s": 20000,
+    "t": 14666.6666666667,
+    "u": 5333.33333333333,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": null,
+    "g": 0,
+    "i": 0.06,
+    "q": 0.461538461538462,
+    "r": 0.784615384615385,
+    "s": 0,
+    "t": 0,
+    "u": 0,
+    "status": "✔"
+   }
+  ],
+  "expected_totals": {
+   "gross": 116003.6,
+   "payable": 85656.8116536797,
+   "gap": 30346.7883463203,
+   "fund": 30346.7883463203,
+   "company_keeps": 0
+  },
+  "expected_pool": 90000,
+  "expected_pool_w": 7
+ },
+ {
+  "params": {
+   "pass_threshold": 0.85,
+   "w_hygiene": 0.06,
+   "w_respect": 0.04,
+   "loss_limit": 20000,
+   "w_loss": 0.12,
+   "days_limit": 2,
+   "w_days": 0.08,
+   "rate_commercial": 0.004,
+   "share_commercial": 0.4,
+   "rate_finance": 0.008,
+   "share_finance": 0.4,
+   "price_meter": 120,
+   "share_cutting": 0.4,
+   "fund_ratio": 0.5,
+   "pool_rate": 0
+  },
+  "turnover": 9000000,
+  "rows": [
+   {
+    "name": "emp0",
+    "perf_type": "finance",
+    "hygiene": 1,
+    "respect": "لا",
+    "losses": null,
+    "days": 1,
+    "base": 450,
+    "post_weight": 1
+   },
+   {
+    "name": "emp1",
+    "perf_type": "finance",
+    "hygiene": 0.9,
+    "respect": "نعم",
+    "losses": 0,
+    "days": null,
+    "base": null,
+    "post_weight": null
+   },
+   {
+    "name": "emp2",
+    "perf_type": "finance",
+    "hygiene": 1,
+    "respect": null,
+    "losses": null,
+    "days": 1,
+    "base": 1500000,
+    "post_weight": 1
+   },
+   {
+    "name": "emp3",
+    "perf_type": "pool",
+    "hygiene": 0.85,
+    "respect": "لا",
+    "losses": 35000,
+    "days": 4,
+    "base": null,
+    "post_weight": 1
+   },
+   {
+    "name": "emp4",
+    "perf_type": "pool",
+    "hygiene": null,
+    "respect": null,
+    "losses": 20000,
+    "days": 1,
+    "base": null,
+    "post_weight": 1.5
+   },
+   {
+    "name": "emp5",
+    "perf_type": "commercial",
+    "hygiene": null,
+    "respect": "نعم",
+    "losses": null,
+    "days": 6,
+    "base": 0,
+    "post_weight": 1.5
+   },
+   {
+    "name": "emp6",
+    "perf_type": "cutting",
+    "hygiene": null,
+    "respect": "نعم",
+    "losses": 35000,
+    "days": 1,
+    "base": 450,
+    "post_weight": null
+   }
+  ],
+  "expected": [
+   {
+    "c": 0.06,
+    "e": 0,
+    "g": null,
+    "i": 0.04,
+    "q": 0.555555555555556,
+    "r": 0.822222222222222,
+    "s": 3.6,
+    "t": 2.96,
+    "u": 0.64,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": 0.04,
+    "g": 0.12,
+    "i": null,
+    "q": 1,
+    "r": 1,
+    "s": null,
+    "t": null,
+    "u": null,
+    "status": "أدخل وزن المنصب"
+   },
+   {
+    "c": 0.06,
+    "e": null,
+    "g": null,
+    "i": 0.04,
+    "q": 0.714285714285714,
+    "r": 0.885714285714286,
+    "s": 12000,
+    "t": 10628.5714285714,
+    "u": 1371.42857142857,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": 0,
+    "g": 0,
+    "i": 0,
+    "q": 0.2,
+    "r": 0.2,
+    "s": null,
+    "t": null,
+    "u": null,
+    "status": "حدّد رقم الأعمال ونسبة المجمَّع"
+   },
+   {
+    "c": null,
+    "e": null,
+    "g": 0,
+    "i": 0.04,
+    "q": 0.2,
+    "r": 0.2,
+    "s": null,
+    "t": null,
+    "u": null,
+    "status": "حدّد رقم الأعمال ونسبة المجمَّع"
+   },
+   {
+    "c": null,
+    "e": 0.04,
+    "g": null,
+    "i": 0,
+    "q": 0.333333333333333,
+    "r": 0.733333333333333,
+    "s": 0,
+    "t": 0,
+    "u": 0,
+    "status": "✔"
+   },
+   {
+    "c": null,
+    "e": 0.04,
+    "g": 0,
+    "i": 0.04,
+    "q": 0.333333333333333,
+    "r": 0.733333333333333,
+    "s": 54000,
+    "t": 39600,
+    "u": 14400,
+    "status": "✔"
+   }
+  ],
+  "expected_totals": {
+   "gross": 66003.6,
+   "payable": 50231.5314285714,
+   "gap": 15772.0685714286,
+   "fund": 7886.03428571429,
+   "company_keeps": 7886.03428571429
+  },
+  "expected_pool": 0,
+  "expected_pool_w": 2.5
+ },
+ {
+  "params": {
+   "pass_threshold": 0.85,
+   "w_hygiene": 0.06,
+   "w_respect": 0.04,
+   "loss_limit": 0,
+   "w_loss": 0.12,
+   "days_limit": 0,
+   "w_days": 0.08,
+   "rate_commercial": 0.004,
+   "share_commercial": 0.4,
+   "rate_finance": 0.008,
+   "share_finance": 0.4,
+   "price_meter": 250,
+   "share_cutting": 0.4,
+   "fund_ratio": 0,
+   "pool_rate": 0.01
+  },
+  "turnover": 0,
+  "rows": [
+   {
+    "name": "emp0",
+    "perf_type": "pool",
+    "hygiene": null,
+    "respect": "نعم",
+    "losses": null,
+    "days": 2,
+    "base": null,
+    "post_weight": 3
+   },
+   {
+    "name": "emp1",
+    "perf_type": "commercial",
+    "hygiene": 0.9,
+    "respect": "لا",
+    "losses": null,
+    "days": 4,
+    "base": 800000,
+    "post_weight": null
+   },
+   {
+    "name": "emp2",
+    "perf_type": "commercial",
+    "hygiene": 0.85,
+    "respect": "نعم",
+    "losses": 3000,
+    "days": 2,
+    "base": 0,
+    "post_weight": 3
+   },
+   {
+    "name": "emp3",
+    "perf_type": "pool",
+    "hygiene": 0.9,
+    "respect": "نعم",
+    "losses": 35000,
+    "days": null,
+    "base": null,
+    "post_weight": 3
+   },
+   {
+    "name": "emp4",
+    "perf_type": "pool",
+    "hygiene": null,
+    "respect": "نعم",
+    "losses": 35000,
+    "days": null,
+    "base": null,
+    "post_weight": 2
+   },
+   {
+    "name": "emp5",
+    "perf_type": "commercial",
+    "hygiene": null,
+    "respect": "نعم",
+    "losses": 35000,
+    "days": 6,
+    "base": 450,
+    "post_weight": 2
+   },
+   {
+    "name": "emp6",
+    "perf_type": "cutting",
+    "hygiene": 0.5,
+    "respect": "لا",
+    "losses": 35000,
+    "days": 0,
+    "base": 0,
+    "post_weight": 3
+   }
+  ],
+  "expected": [
+   {
+    "c": null,
+    "e": 0.04,
+    "g": null,
+    "i": 0,
+    "q": 0.333333333333333,
+    "r": 0.333333333333333,
+    "s": null,
+    "t": null,
+    "u": null,
+    "status": "حدّد رقم الأعمال ونسبة المجمَّع"
+   },
+   {
+    "c": 0.06,
+    "e": 0,
+    "g": null,
+    "i": 0,
+    "q": 0.333333333333333,
+    "r": 0.733333333333333,
+    "s": 3200,
+    "t": 2346.66666666667,
+    "u": 853.333333333334,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": 0.04,
+    "g": 0,
+    "i": 0,
+    "q": 0.333333333333333,
+    "r": 0.733333333333333,
+    "s": 0,
+    "t": 0,
+    "u": 0,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": 0.04,
+    "g": 0,
+    "i": null,
+    "q": 0.454545454545455,
+    "r": 0.454545454545455,
+    "s": null,
+    "t": null,
+    "u": null,
+    "status": "حدّد رقم الأعمال ونسبة المجمَّع"
+   },
+   {
+    "c": null,
+    "e": 0.04,
+    "g": 0,
+    "i": null,
+    "q": 0.25,
+    "r": 0.25,
+    "s": null,
+    "t": null,
+    "u": null,
+    "status": "حدّد رقم الأعمال ونسبة المجمَّع"
+   },
+   {
+    "c": null,
+    "e": 0.04,
+    "g": 0,
+    "i": 0,
+    "q": 0.166666666666667,
+    "r": 0.666666666666667,
+    "s": 1.8,
+    "t": 1.2,
+    "u": 0.6,
+    "status": "✔"
+   },
+   {
+    "c": 0,
+    "e": 0,
+    "g": 0,
+    "i": 0.08,
+    "q": 0.266666666666667,
+    "r": 0.706666666666667,
+    "s": 0,
+    "t": 0,
+    "u": 0,
+    "status": "✔"
+   }
+  ],
+  "expected_totals": {
+   "gross": 3201.8,
+   "payable": 2347.86666666667,
+   "gap": 853.933333333334,
+   "fund": 0,
+   "company_keeps": 853.933333333334
+  },
+  "expected_pool": 0,
+  "expected_pool_w": 8
+ },
+ {
+  "params": {
+   "pass_threshold": 0.85,
+   "w_hygiene": 0.06,
+   "w_respect": 0.04,
+   "loss_limit": 0,
+   "w_loss": 0.12,
+   "days_limit": 4,
+   "w_days": 0.08,
+   "rate_commercial": 0.004,
+   "share_commercial": 0.4,
+   "rate_finance": 0.008,
+   "share_finance": 0.4,
+   "price_meter": 120,
+   "share_cutting": 0.4,
+   "fund_ratio": 0,
+   "pool_rate": 0.02
+  },
+  "turnover": 9000000,
+  "rows": [
+   {
+    "name": "emp0",
+    "perf_type": "pool",
+    "hygiene": 0.85,
+    "respect": null,
+    "losses": 20000,
+    "days": 0,
+    "base": null,
+    "post_weight": 1
+   },
+   {
+    "name": "emp1",
+    "perf_type": "pool",
+    "hygiene": 0.5,
+    "respect": "لا",
+    "losses": 3000,
+    "days": 0,
+    "base": null,
+    "post_weight": 1
+   },
+   {
+    "name": "emp2",
+    "perf_type": "finance",
+    "hygiene": null,
+    "respect": "لا",
+    "losses": null,
+    "days": 1,
+    "base": 2500000,
+    "post_weight": 1
+   },
+   {
+    "name": "emp3",
+    "perf_type": "commercial",
+    "hygiene": 0.5,
+    "respect": "نعم",
+    "losses": 20000,
+    "days": 6,
+    "base": 2500000,
+    "post_weight": 3
+   },
+   {
+    "name": "emp4",
+    "perf_type": "pool",
+    "hygiene": 0.85,
+    "respect": "لا",
+    "losses": 35000,
+    "days": 2,
+    "base": null,
+    "post_weight": 1.5
+   },
+   {
+    "name": "emp5",
+    "perf_type": "commercial",
+    "hygiene": 1,
+    "respect": null,
+    "losses": 3000,
+    "days": 4,
+    "base": 0,
+    "post_weight": 1.5
+   },
+   {
+    "name": "emp6",
+    "perf_type": "cutting",
+    "hygiene": 0.5,
+    "respect": "نعم",
+    "losses": 20000,
+    "days": 0,
+    "base": null,
+    "post_weight": null
+   },
+   {
+    "name": "emp7",
+    "perf_type": "cutting",
+    "hygiene": null,
+    "respect": "لا",
+    "losses": null,
+    "days": 2,
+    "base": 450,
+    "post_weight": null
+   },
+   {
+    "name": "emp8",
+    "perf_type": "pool",
+    "hygiene": 0.85,
+    "respect": null,
+    "losses": 0,
+    "days": 0,
+    "base": null,
+    "post_weight": 2
+   },
+   {
+    "name": "emp9",
+    "perf_type": "cutting",
+    "hygiene": 0.9,
+    "respect": "لا",
+    "losses": null,
+    "days": 0,
+    "base": 450,
+    "post_weight": 1
+   },
+   {
+    "name": "emp10",
+    "perf_type": "cutting",
+    "hygiene": 1,
+    "respect": "لا",
+    "losses": 35000,
+    "days": 0,
+    "base": 1500000,
+    "post_weight": 2
+   }
+  ],
+  "expected": [
+   {
+    "c": 0.06,
+    "e": null,
+    "g": 0,
+    "i": 0.08,
+    "q": 0.538461538461539,
+    "r": 0.538461538461539,
+    "s": 32727.2727272727,
+    "t": 17622.3776223776,
+    "u": 15104.8951048951,
+    "status": "✔"
+   },
+   {
+    "c": 0,
+    "e": 0,
+    "g": 0,
+    "i": 0.08,
+    "q": 0.266666666666667,
+    "r": 0.266666666666667,
+    "s": 32727.2727272727,
+    "t": 8727.27272727273,
+    "u": 24000,
+    "status": "✔"
+   },
+   {
+    "c": null,
+    "e": 0,
+    "g": null,
+    "i": 0.06,
+    "q": 0.5,
+    "r": 0.8,
+    "s": 20000,
+    "t": 16000,
+    "u": 4000,
+    "status": "✔"
+   },
+   {
+    "c": 0,
+    "e": 0.04,
+    "g": 0,
+    "i": 0,
+    "q": 0.133333333333333,
+    "r": 0.653333333333333,
+    "s": 10000,
+    "t": 6533.33333333333,
+    "u": 3466.66666666667,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": 0,
+    "g": 0,
+    "i": 0.04,
+    "q": 0.333333333333333,
+    "r": 0.333333333333333,
+    "s": 49090.9090909091,
+    "t": 16363.6363636364,
+    "u": 32727.2727272727,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": null,
+    "g": 0,
+    "i": 0,
+    "q": 0.230769230769231,
+    "r": 0.692307692307692,
+    "s": 0,
+    "t": 0,
+    "u": 0,
+    "status": "✔"
+   },
+   {
+    "c": 0,
+    "e": 0.04,
+    "g": 0,
+    "i": 0.08,
+    "q": 0.4,
+    "r": 0.4,
+    "s": null,
+    "t": null,
+    "u": null,
+    "status": "أدخل وزن المنصب"
+   },
+   {
+    "c": null,
+    "e": 0,
+    "g": null,
+    "i": 0.04,
+    "q": 0.333333333333333,
+    "r": 0.733333333333333,
+    "s": 54000,
+    "t": 39600,
+    "u": 14400,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": null,
+    "g": 0.12,
+    "i": 0.08,
+    "q": 1,
+    "r": 1,
+    "s": 65454.5454545455,
+    "t": 65454.5454545455,
+    "u": 0,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": 0,
+    "g": null,
+    "i": 0.08,
+    "q": 0.777777777777778,
+    "r": 0.911111111111111,
+    "s": 54000,
+    "t": 49200,
+    "u": 4799.99999999999,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": 0,
+    "g": 0,
+    "i": 0.08,
+    "q": 0.466666666666667,
+    "r": 0.786666666666667,
+    "s": 180000000,
+    "t": 141600000,
+    "u": 38400000,
+    "status": "✔"
+   }
+  ],
+  "expected_totals": {
+   "gross": 180318000,
+   "payable": 141819501.165501,
+   "gap": 38498498.8344988,
+   "fund": 0,
+   "company_keeps": 38498498.8344988
+  },
+  "expected_pool": 180000,
+  "expected_pool_w": 5.5
+ },
+ {
+  "params": {
+   "pass_threshold": 0.85,
+   "w_hygiene": 0.06,
+   "w_respect": 0.04,
+   "loss_limit": 5000,
+   "w_loss": 0.12,
+   "days_limit": 0,
+   "w_days": 0.08,
+   "rate_commercial": 0.004,
+   "share_commercial": 0.4,
+   "rate_finance": 0.008,
+   "share_finance": 0.4,
+   "price_meter": 0,
+   "share_cutting": 0.4,
+   "fund_ratio": 1,
+   "pool_rate": 0.02
+  },
+  "turnover": 9000000,
+  "rows": [
+   {
+    "name": "emp0",
+    "perf_type": "pool",
+    "hygiene": 0.9,
+    "respect": null,
+    "losses": null,
+    "days": 2,
+    "base": null,
+    "post_weight": 3
+   },
+   {
+    "name": "emp1",
+    "perf_type": "pool",
+    "hygiene": 1,
+    "respect": "نعم",
+    "losses": 20000,
+    "days": 1,
+    "base": null,
+    "post_weight": 1
+   },
+   {
+    "name": "emp2",
+    "perf_type": "commercial",
+    "hygiene": 0.9,
+    "respect": null,
+    "losses": 3000,
+    "days": 4,
+    "base": 0,
+    "post_weight": 1.5
+   },
+   {
+    "name": "emp3",
+    "perf_type": "cutting",
+    "hygiene": null,
+    "respect": null,
+    "losses": 20000,
+    "days": 1,
+    "base": 0,
+    "post_weight": 3
+   },
+   {
+    "name": "emp4",
+    "perf_type": "pool",
+    "hygiene": 0.85,
+    "respect": "نعم",
+    "losses": null,
+    "days": 0,
+    "base": null,
+    "post_weight": null
+   },
+   {
+    "name": "emp5",
+    "perf_type": "pool",
+    "hygiene": null,
+    "respect": null,
+    "losses": 35000,
+    "days": 1,
+    "base": null,
+    "post_weight": 1
+   },
+   {
+    "name": "emp6",
+    "perf_type": "pool",
+    "hygiene": 0.5,
+    "respect": "لا",
+    "losses": 35000,
+    "days": 6,
+    "base": null,
+    "post_weight": 2
+   },
+   {
+    "name": "emp7",
+    "perf_type": "pool",
+    "hygiene": 1,
+    "respect": "لا",
+    "losses": null,
+    "days": 0,
+    "base": null,
+    "post_weight": 2
+   }
+  ],
+  "expected": [
+   {
+    "c": 0.06,
+    "e": null,
+    "g": null,
+    "i": 0,
+    "q": 0.428571428571429,
+    "r": 0.428571428571429,
+    "s": 60000,
+    "t": 25714.2857142857,
+    "u": 34285.7142857143,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": 0.04,
+    "g": 0,
+    "i": 0,
+    "q": 0.333333333333333,
+    "r": 0.333333333333333,
+    "s": 20000,
+    "t": 6666.66666666667,
+    "u": 13333.3333333333,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": null,
+    "g": 0.048,
+    "i": 0,
+    "q": 0.415384615384615,
+    "r": 0.766153846153846,
+    "s": 0,
+    "t": 0,
+    "u": 0,
+    "status": "✔"
+   },
+   {
+    "c": null,
+    "e": null,
+    "g": 0,
+    "i": 0,
+    "q": 0,
+    "r": 0.6,
+    "s": 0,
+    "t": 0,
+    "u": 0,
+    "status": "حدّد النسبة / سعر المتر في صف المعاملات"
+   },
+   {
+    "c": 0.06,
+    "e": 0.04,
+    "g": null,
+    "i": 0.08,
+    "q": 1,
+    "r": 1,
+    "s": null,
+    "t": null,
+    "u": null,
+    "status": "أدخل وزن المنصب"
+   },
+   {
+    "c": null,
+    "e": null,
+    "g": 0,
+    "i": 0,
+    "q": 0,
+    "r": 0,
+    "s": 20000,
+    "t": 0,
+    "u": 20000,
+    "status": "✔"
+   },
+   {
+    "c": 0,
+    "e": 0,
+    "g": 0,
+    "i": 0,
+    "q": 0,
+    "r": 0,
+    "s": 40000,
+    "t": 0,
+    "u": 40000,
+    "status": "✔"
+   },
+   {
+    "c": 0.06,
+    "e": 0,
+    "g": null,
+    "i": 0.08,
+    "q": 0.777777777777778,
+    "r": 0.777777777777778,
+    "s": 40000,
+    "t": 31111.1111111111,
+    "u": 8888.88888888888,
+    "status": "✔"
+   }
+  ],
+  "expected_totals": {
+   "gross": 180000,
+   "payable": 63492.0634920635,
+   "gap": 116507.936507937,
+   "fund": 116507.936507937,
+   "company_keeps": 0
+  },
+  "expected_pool": 180000,
+  "expected_pool_w": 9
+ }
+]
