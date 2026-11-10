@@ -653,6 +653,7 @@ class SheetParamsIn(BaseModel):
     share_cutting: float = Field(ge=0, le=1)
     fund_ratio: float = Field(ge=0, le=1)
     pool_rate: float = Field(ge=0, le=1)
+    violation_map: Optional[dict[str, str]] = None
 
 
 class SheetTurnoverIn(BaseModel):
@@ -680,17 +681,19 @@ class ViolationEntryIn(BaseModel):
 
 async def sheet_params_doc() -> dict:
     d = await db.settings.find_one({"id": "sheet_params"}, {"_id": 0, "id": 0})
-    return sheet.merge_params(d)
+    return {**sheet.merge_params(d), "violation_map": sheet.merge_violation_map((d or {}).get("violation_map"))}
 
 
 @api.get("/sheet/params")
 async def get_sheet_params(_=Depends(staff_only)):
-    return await sheet_params_doc()
+    return {**await sheet_params_doc(), "violation_types": [{"code": c, "label": l} for c, l in sheet.VIOLATION_TYPES]}
 
 
 @api.put("/sheet/params")
 async def put_sheet_params(data: SheetParamsIn, _=Depends(admin_only)):
-    await db.settings.update_one({"id": "sheet_params"}, {"$set": {"id": "sheet_params", **data.model_dump()}}, upsert=True)
+    doc = data.model_dump()
+    doc["violation_map"] = sheet.merge_violation_map(doc.get("violation_map"))
+    await db.settings.update_one({"id": "sheet_params"}, {"$set": {"id": "sheet_params", **doc}}, upsert=True)
     return await sheet_params_doc()
 
 
@@ -704,10 +707,12 @@ async def build_sheet(month: str, only_employee: Optional[str] = None) -> dict:
     rows_in = []
     for e in emps:
         x = entries.get(e["id"], {})
+        counts = vio.get(e["id"], {}).get("counts") or {}
+        auto = sheet.derive_inputs(params["violation_map"], counts)  # الهندام/الاحترام/الأيام تُحسب تلقائيًا من سجل المخالفات
         rows_in.append({"id": e["id"], "name": e["full_name"], "perf_type": e.get("perf_type", "pool"),
-                        "post_weight": e.get("post_weight"), "hygiene": x.get("hygiene"), "respect": x.get("respect"),
-                        "losses": x.get("losses"), "days": x.get("days"), "base": x.get("base"),
-                        "violations": sum(int(v) for v in (vio.get(e["id"], {}).get("counts") or {}).values())})
+                        "post_weight": e.get("post_weight"), "hygiene": auto["hygiene"], "respect": auto["respect"],
+                        "losses": x.get("losses"), "days": auto["days"], "base": x.get("base"), "hits": auto["hits"],
+                        "violations": sum(int(v) for v in counts.values())})
     res = sheet.calc_sheet(params, turnover, rows_in)
     res["month"], res["turnover"] = month, turnover
     return res

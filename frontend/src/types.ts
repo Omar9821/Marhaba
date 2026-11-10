@@ -40,10 +40,14 @@ export type SheetParams = {
   pass_threshold: number; w_hygiene: number; w_respect: number; loss_limit: number; w_loss: number; days_limit: number; w_days: number;
   rate_commercial: number; share_commercial: number; rate_finance: number; share_finance: number; price_meter: number; share_cutting: number;
   fund_ratio: number; pool_rate: number;
+  violation_map?: Record<string, ImpactGroup>; violation_types?: { code: string; label: string }[];
 };
+export type ImpactGroup = "days" | "hygiene" | "respect" | "none";
+export const IMPACT_LABEL: Record<ImpactGroup, string> = { days: "التأخرات والغيابات", hygiene: "الهندام والنظافة", respect: "الاحترام", none: "لا يؤثر" };
 export type SheetRow = {
   id: string; name: string; perf_type: PerfType; post_weight: number | null;
   hygiene: number | null; respect: "نعم" | "لا" | null; losses: number | null; days: number | null; base: number | null; violations: number;
+  hits?: { days: number; hygiene: number; respect: number };
   c: number | null; e: number | null; g: number | null; i: number | null; q: number | null; r: number | null;
   s: number | null; t: number | null; u: number | null; status: string;
 };

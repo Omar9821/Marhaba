@@ -44,6 +44,7 @@ export default function ViolationsScreen() {
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: S.lg, gap: S.md, paddingBottom: (usesNativeTabs ? insets.bottom : 0) + S.xl }}
           refreshControl={<RefreshControl refreshing={q.refreshing} onRefresh={q.refresh} tintColor={colors.brandPrimary} />}>
           <MonthSwitcher month={month} onChange={setMonth} />
+          <T variant="caption">كل مخالفة تُسجَّل هنا تُحتسب تلقائيًا في منحة الشهر (جدول الأداء) حسب الأثر المحدد في الإعدادات.</T>
           <Row style={{ gap: S.sm }}>
             <StatTile testID="vio-total" icon="warning-outline" label="إجمالي المخالفات" value={String(log.total)} />
             <StatTile testID="vio-employees" icon="people-outline" label="موظفين لديهم مخالفات" value={String(log.employees_with)} />

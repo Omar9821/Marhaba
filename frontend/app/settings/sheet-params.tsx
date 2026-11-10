@@ -8,10 +8,11 @@ import { api } from "@/src/api";
 import { parseNum } from "@/src/components/sheet-ui";
 import { useApi } from "@/src/hooks";
 import { useTheme } from "@/src/theme";
-import { SheetParams } from "@/src/types";
-import { Btn, Card, Field, Header, Loading, S, T, useToast } from "@/src/ui";
+import { IMPACT_LABEL, ImpactGroup, SheetParams } from "@/src/types";
+import { Btn, Card, Chip, Field, Header, Loading, Row, S, T, useToast } from "@/src/ui";
 
-type Def = { key: keyof SheetParams; label: string; unit: string; scale: number; hint?: string };
+type NumKey = Exclude<keyof SheetParams, "violation_map" | "violation_types">;
+type Def = { key: NumKey; label: string; unit: string; scale: number; hint?: string };
 const GROUPS: { title: string; defs: Def[] }[] = [
   { title: "الهندام والنظافة والاحترام", defs: [
     { key: "pass_threshold", label: "حدّ النجاح (نسبة التفتيش)", unit: "%", scale: 100, hint: "نجاح كامل إن بلغت النسبة الحد، وإلا صفر" },
@@ -46,12 +47,14 @@ export default function SheetParamsScreen() {
   const q = useApi<SheetParams>("/sheet/params");
   const [f, setF] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [vmap, setVmap] = useState<Record<string, ImpactGroup>>({});
 
   useEffect(() => {
     if (!q.data) return;
     const m: Record<string, string> = {};
     GROUPS.forEach((g) => g.defs.forEach((d) => { m[d.key] = String(Math.round(q.data![d.key] * d.scale * 1e6) / 1e6); }));
     setF(m);
+    setVmap(q.data.violation_map ?? {});
   }, [q.data]);
 
   const save = async () => {
@@ -65,7 +68,7 @@ export default function SheetParamsScreen() {
       return toast("النسب يجب ألا تتجاوز 100%", "error");
     setSaving(true);
     try {
-      await api.put("/sheet/params", body);
+      await api.put("/sheet/params", { ...body, violation_map: vmap });
       toast("تم حفظ المعاملات");
       router.back();
     } catch (e: any) {
@@ -90,6 +93,20 @@ export default function SheetParamsScreen() {
                 ))}
               </Card>
             ))}
+            <Card style={{ gap: S.md }} testID="violation-impact-card">
+              <T variant="h3">أثر المخالفات على المنحة</T>
+              <T variant="caption">كل مخالفة تُسجَّل في «سجل المخالفات» تُحتسب تلقائيًا في منحة الشهر حسب المؤشر الذي تختاره هنا: التأخرات والغيابات (كل مخالفة = يوم)، الهندام والنظافة (أي مخالفة = رسوب)، الاحترام (أي مخالفة = «لا»).</T>
+              {(q.data?.violation_types ?? []).map((t) => (
+                <View key={t.code} style={{ gap: S.xs }}>
+                  <T variant="label">{t.label}</T>
+                  <Row style={{ flexWrap: "wrap", gap: S.sm }}>
+                    {(Object.keys(IMPACT_LABEL) as ImpactGroup[]).map((g) => (
+                      <Chip key={g} testID={`impact-${t.code}-${g}`} label={IMPACT_LABEL[g]} selected={(vmap[t.code] ?? "none") === g} onPress={() => setVmap((s) => ({ ...s, [t.code]: g }))} />
+                    ))}
+                  </Row>
+                </View>
+              ))}
+            </Card>
           </KeyboardAwareScrollView>
           <View style={{ padding: S.lg, paddingBottom: insets.bottom + S.md, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
             <Btn testID="save-params-button" title="حفظ المعاملات" onPress={save} loading={saving} />
