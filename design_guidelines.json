@@ -1,0 +1,139 @@
+{
+  "app_name": "Mardaoudia Tracker (مسار الأداء)",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A clean, native-feeling, high-trust interface focused on clarity, structured data, and readable Arabic typography for managing employee performance and bonuses.",
+  "color": {
+    "surface": "#ffffff",
+    "onSurface": "#111814",
+    "surfaceSecondary": "#f5f7f6",
+    "onSurfaceSecondary": "#1a201d",
+    "surfaceTertiary": "#eaeeec",
+    "onSurfaceTertiary": "#1a201d",
+    "surfaceInverse": "#1a201d",
+    "onSurfaceInverse": "#ffffff",
+    "brand": "#2d4a3e",
+    "onBrand": "#ffffff",
+    "brandPrimary": "#3e6b57",
+    "onBrandPrimary": "#ffffff",
+    "brandSecondary": "#8ba396",
+    "onBrandSecondary": "#ffffff",
+    "brandTertiary": "#e2efe8",
+    "onBrandTertiary": "#1a201d",
+    "success": "#107c41",
+    "onSuccess": "#ffffff",
+    "warning": "#b87400",
+    "onWarning": "#ffffff",
+    "error": "#c50f1f",
+    "onError": "#ffffff",
+    "info": "#2d4a3e",
+    "onInfo": "#ffffff",
+    "border": "#e0e5e3",
+    "borderStrong": "#a4b5ac",
+    "divider": "#e8ecea",
+    "muted": "#687670"
+  },
+  "typography": {
+    "displayFontFamily": "Cairo",
+    "textFontFamily": "Tajawal",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical breathing room. Clear grouping of KPIs using surfaceSecondary. Arabic RTL requires right-aligned text and mirrored icons (like back button).",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": "true",
+    "do's": [
+      "Use on sticky headers over scrolling content",
+      "Use on bottom tab bar",
+      "Use on featured KPI cards overlaying the abstract green background"
+    ],
+    "dont's": [
+      "Do not use on generic form fields or list items",
+      "Do not blur entire screens"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Admin Dashboard",
+      "purpose": "Overview of company performance, recent infractions, and quick KPI entry buttons.",
+      "states": {
+        "loading": "Centered spinner with 'جاري التحميل...'",
+        "empty": "Illustration of a clean desk with text 'لا توجد بيانات لهذا الشهر' and a primary CTA 'إضافة بيانات'",
+        "error": "Readable error message with a 'إعادة المحاولة' button"
+      },
+      "layout": "Modular card-based layout. A featured hero card (glass over green abstract texture) for top-level stats (Total Bonus Fund). Horizontal scroll for quick team KPI metrics. Floating Action Button (FAB) for quick infraction logging."
+    },
+    {
+      "name": "Employee Portal",
+      "purpose": "Transparency screen for the employee to view their expected bonus (دج) and logged infractions.",
+      "states": {
+        "loading": "Centered spinner",
+        "empty": "Stack of coins illustration with text 'لم يتم احتساب المردودية بعد'",
+        "error": "Readable error message with retry"
+      },
+      "layout": "Large numeric typography for the Expected Bonus at the top. Segmented controls below to switch between 'My Performance' and 'Infraction History'. Clear progress bars for KPI achievements."
+    },
+    {
+      "name": "Settings Center",
+      "purpose": "Advanced configuration for KPIs, job titles, and bonus calculation rules.",
+      "states": {
+        "loading": "Centered spinner",
+        "empty": "Text 'لم يتم إعداد القواعد بعد'",
+        "error": "Error message with retry"
+      },
+      "layout": "List-heavy layout. Grouped iOS-style settings rows. Labels above inputs for forms, with sticky 'حفظ' (Save) CTA at the bottom."
+    }
+  ],
+  "images": {
+    "hero_card_background": {
+      "url": "https://images.unsplash.com/photo-1629197520635-16570fbd0bb3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2ODh8MHwxfHNlYXJjaHwxfHxncmVlbiUyMGFic3RyYWN0JTIwdGV4dHVyZXxlbnwwfHx8fDE3OTQzMjQ1MjN8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Green abstract texture for hero cards"
+    },
+    "bonus_empty_state": {
+      "url": "https://images.unsplash.com/photo-1669951584309-492ed24d274f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2MDV8MHwxfHNlYXJjaHwxfHxtaW5pbWFsJTIwY29pbnMlMjBzdGFja2VkfGVufDB8fHx8MTc5NDMyNDUyM3ww&ixlib=rb-4.1.0&q=85",
+      "alt": "Minimal coins stacked for bonus calculation"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Ensure RTL (Right-to-Left) is fully implemented using I18nManager from React Native and flexbox directions (e.g., flex-row-reverse or correctly aligned start/end).",
+    "Typography: Load and use 'Cairo' for display headings and 'Tajawal' for text body using expo-font. Restrict font weights to 400/500 max.",
+    "Do NOT use any shade of Blue, Indigo, or Purple. The app strictly uses the Moss Green/Botanical palette to convey trust and financial growth.",
+    "For the Admin Dashboard, use modular cards. Place a sticky primary action button (e.g., 'Log Infraction' / 'تسجيل مخالفة') at the bottom of the screen or as a glass FAB.",
+    "Format currency properly with 'دج' (Algerian Dinar) suffix.",
+    "Any text displayed over the 'hero_card_background' must have a vertical top-to-bottom transparent-to-dark gradient scrim to guarantee WCAG contrast ratios."
+  ]
+}
