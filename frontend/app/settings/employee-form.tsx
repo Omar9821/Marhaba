@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api, getCached } from "@/src/api";
 import { useApi } from "@/src/hooks";
 import { useTheme } from "@/src/theme";
-import { Employee, Position } from "@/src/types";
+import { Employee, PERF_TYPE_LABEL, PerfType, Position } from "@/src/types";
 import { Btn, Card, Chip, ConfirmSheet, Field, Header, Loading, Row, S, SwitchRow, T, useToast } from "@/src/ui";
 
 export default function EmployeeForm() {
@@ -18,7 +18,7 @@ export default function EmployeeForm() {
   const toast = useToast();
   const positions = useApi<Position[]>("/positions");
   const [ready, setReady] = useState(!id);
-  const [f, setF] = useState({ full_name: "", phone: "", email: "", password: "", position_id: "", hire_date: "", base_salary: "", status: "active" as "active" | "inactive" });
+  const [f, setF] = useState({ full_name: "", phone: "", email: "", password: "", position_id: "", hire_date: "", base_salary: "", status: "active" as "active" | "inactive", perf_type: "pool" as PerfType, post_weight: "" });
   const [saving, setSaving] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const set = (k: keyof typeof f) => (v: any) => setF((s) => ({ ...s, [k]: v }));
@@ -27,7 +27,7 @@ export default function EmployeeForm() {
     if (!id) return;
     getCached<Employee[]>("/employees").then(({ data }) => {
       const e = data.find((x) => x.id === id);
-      if (e) setF({ full_name: e.full_name, phone: e.phone, email: e.email ?? "", password: "", position_id: e.position_id, hire_date: e.hire_date, base_salary: String(e.base_salary), status: e.status });
+      if (e) setF({ full_name: e.full_name, phone: e.phone, email: e.email ?? "", password: "", position_id: e.position_id, hire_date: e.hire_date, base_salary: String(e.base_salary), status: e.status, perf_type: e.perf_type ?? "pool", post_weight: e.post_weight == null ? "" : String(e.post_weight) });
       setReady(true);
     }).catch(() => setReady(true));
   }, [id]);
@@ -40,7 +40,7 @@ export default function EmployeeForm() {
     if (!f.position_id) return toast("اختر المنصب", "error");
     if (f.hire_date && !/^\d{4}-\d{2}-\d{2}$/.test(f.hire_date)) return toast("صيغة التاريخ: YYYY-MM-DD", "error");
     setSaving(true);
-    const body = { ...f, full_name: f.full_name.trim(), email: f.email.trim() || null, password: f.password || null, base_salary: parseFloat(f.base_salary.replace(",", ".")) || 0 };
+    const body = { ...f, full_name: f.full_name.trim(), email: f.email.trim() || null, password: f.password || null, base_salary: parseFloat(f.base_salary.replace(",", ".")) || 0, post_weight: f.perf_type === "pool" && f.post_weight.trim() !== "" ? parseFloat(f.post_weight.replace(",", ".")) || 0 : null };
     try {
       if (id) await api.put(`/employees/${id}`, body);
       else await api.post("/employees", body);
@@ -89,6 +89,19 @@ export default function EmployeeForm() {
                 ))}
               </Row>
               <Field testID="employee-salary-input" label="الراتب الأساسي (دج)" value={f.base_salary} onChangeText={set("base_salary")} keyboardType="decimal-pad" placeholder="40000" hint="يُخزن مشفراً في قاعدة البيانات" />
+            </Card>
+            <Card style={{ gap: S.md }}>
+              <T variant="h3">نوع المردودية (جدول الأداء)</T>
+              <Row style={{ flexWrap: "wrap", gap: S.sm }}>
+                {(Object.keys(PERF_TYPE_LABEL) as PerfType[]).map((k) => (
+                  <Chip key={k} testID={`perf-type-${k}`} label={PERF_TYPE_LABEL[k]} selected={f.perf_type === k} onPress={() => set("perf_type")(k)} />
+                ))}
+              </Row>
+              {f.perf_type === "pool" ? (
+                <Field testID="employee-post-weight-input" label="وزن المنصب (للعمال فقط)" value={f.post_weight} onChangeText={set("post_weight")} keyboardType="decimal-pad" placeholder="1" hint="يُوزَّع المجمَّع بنسبة وزن كل منصب" />
+              ) : (
+                <T variant="caption">التجاري/المالية/التقطيع: عمولة = الأساس × النسبة (الأساس يكتبه المسير في جدول الأداء).</T>
+              )}
             </Card>
             <Card style={{ gap: S.md }}>
               <T variant="h3">حساب الدخول لبوابة الموظف</T>

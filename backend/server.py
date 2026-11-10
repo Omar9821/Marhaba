@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 from pymongo import ASCENDING, DESCENDING, IndexModel
 from starlette.middleware.cors import CORSMiddleware
 
+import sheet_engine as sheet
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
@@ -30,13 +32,18 @@ logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Database schema (collections) — every document uses a string `id`, `_id` never leaves the API
-#   users              {id, email, name, role: admin|employee, password_hash?, employee_id?, picture?}
+#   users              {id, email, name, role: admin|inspector|employee, password_hash?, employee_id?, picture?}
 #   user_sessions      {session_token, user_id, expires_at}   (Google login sessions)
 #   settings           {id:"global", currency, bonus_mode, point_value, multiplier, salary_rate,
 #                       max_ratio, bonus_cap, fund_percent, competitive_percent, competitive_winners,
 #                       max_infractions, min_score}
 #   positions          {id, name, point_value?, kpis:[{id, name, weight, target, unit}]}
-#   employees          {id, full_name, phone_enc, email?, position_id, hire_date, base_salary_enc, status}
+#   employees          {id, full_name, phone_enc, email?, position_id, hire_date, base_salary_enc, status,
+#                       perf_type: commercial|finance|cutting|pool, post_weight?}
+#   settings (id:"sheet_params")  معاملات «جدول الأداء والمردودية» (انظر sheet_engine.DEFAULT_PARAMS)
+#   sheet_months       {month, turnover}                              رقم أعمال الشركة المحصَّل الصافي
+#   sheet_entries      {employee_id, month, hygiene, respect, losses, days, base}  unique(employee_id,month)
+#   violation_entries  {employee_id, month, counts:{code:int}, note, follow_date}  unique(employee_id,month)
 #   infraction_types   {id, name, deduction_type: points|percent|amount, value, active}
 #   performance_entries{id, employee_id, date, kpi_id, target, achieved}  unique(employee_id,date,kpi_id)
 #   infractions        {id, employee_id, type_id, date, note}
@@ -52,6 +59,9 @@ INDEXES: dict[str, list[IndexModel]] = {
     "performance_entries": [
         IndexModel([("employee_id", ASCENDING), ("date", ASCENDING), ("kpi_id", ASCENDING)], name="emp_date_kpi", unique=True),
         IndexModel([("date", ASCENDING)], name="date")],
+    "sheet_months": [IndexModel([("month", ASCENDING)], name="month", unique=True)],
+    "sheet_entries": [IndexModel([("employee_id", ASCENDING), ("month", ASCENDING)], name="emp_month", unique=True)],
+    "violation_entries": [IndexModel([("employee_id", ASCENDING), ("month", ASCENDING)], name="emp_month", unique=True)],
     "infractions": [IndexModel([("id", ASCENDING)], name="id", unique=True),
                     IndexModel([("employee_id", ASCENDING), ("date", DESCENDING)], name="emp_date"),
                     IndexModel([("date", DESCENDING)], name="date")],
@@ -126,6 +136,8 @@ class EmployeeIn(BaseModel):
     hire_date: str = ""
     base_salary: float = 0
     status: Literal["active", "inactive"] = "active"
+    perf_type: Literal["commercial", "finance", "cutting", "pool"] = "pool"
+    post_weight: Optional[float] = Field(default=None, ge=0)
 
 
 class InfractionTypeIn(BaseModel):
@@ -231,6 +243,13 @@ async def current_user(request: Request) -> dict:
 
 async def admin_only(user=Depends(current_user)) -> dict:
     if user["role"] != "admin":
+        raise HTTPException(403, "صلاحيات غير كافية")
+    return user
+
+
+async def staff_only(user=Depends(current_user)) -> dict:
+    """المسير أو المراقب."""
+    if user["role"] not in ("admin", "inspector"):
         raise HTTPException(403, "صلاحيات غير كافية")
     return user
 
@@ -341,7 +360,7 @@ def employee_out(e: dict, positions: dict) -> dict:
     return {"id": e["id"], "full_name": e["full_name"], "phone": dec(e.get("phone_enc")), "email": e.get("email"),
             "position_id": e["position_id"], "position_name": positions.get(e["position_id"], {}).get("name", "—"),
             "hire_date": e.get("hire_date", ""), "base_salary": float(dec(e.get("base_salary_enc")) or 0),
-            "status": e.get("status", "active")}
+            "status": e.get("status", "active"), "perf_type": e.get("perf_type", "pool"), "post_weight": e.get("post_weight")}
 
 
 async def positions_map() -> dict:
@@ -367,11 +386,15 @@ async def sync_employee_user(emp_id: str, name: str, email: Optional[str], passw
 
 
 @api.get("/employees")
-async def list_employees(include_inactive: bool = True, _=Depends(admin_only)):
+async def list_employees(include_inactive: bool = True, user=Depends(staff_only)):
     q = {} if include_inactive else {"status": "active"}
     pm = await positions_map()
     emps = await db.employees.find(q, {"_id": 0}).sort("full_name", 1).to_list(2000)
-    return [employee_out(e, pm) for e in emps]
+    out = [employee_out(e, pm) for e in emps]
+    if user["role"] != "admin":  # المراقب لا يرى الرواتب ولا الهواتف
+        for o in out:
+            o["base_salary"], o["phone"] = 0, ""
+    return out
 
 
 @api.post("/employees")
@@ -382,7 +405,7 @@ async def create_employee(data: EmployeeIn, _=Depends(admin_only)):
     await sync_employee_user(eid, data.full_name, data.email, data.password)
     doc = {"id": eid, "full_name": data.full_name, "phone_enc": enc(data.phone), "email": (data.email or "").strip().lower() or None,
            "position_id": data.position_id, "hire_date": data.hire_date, "base_salary_enc": enc(data.base_salary),
-           "status": data.status, "created_at": now_utc()}
+           "status": data.status, "perf_type": data.perf_type, "post_weight": data.post_weight, "created_at": now_utc()}
     await db.employees.insert_one(dict(doc))
     return employee_out(doc, await positions_map())
 
@@ -393,7 +416,8 @@ async def update_employee(eid: str, data: EmployeeIn, _=Depends(admin_only)):
         raise HTTPException(404, "الموظف غير موجود")
     await sync_employee_user(eid, data.full_name, data.email, data.password)
     upd = {"full_name": data.full_name, "phone_enc": enc(data.phone), "email": (data.email or "").strip().lower() or None,
-           "position_id": data.position_id, "hire_date": data.hire_date, "base_salary_enc": enc(data.base_salary), "status": data.status}
+           "position_id": data.position_id, "hire_date": data.hire_date, "base_salary_enc": enc(data.base_salary), "status": data.status,
+           "perf_type": data.perf_type, "post_weight": data.post_weight}
     await db.employees.update_one({"id": eid}, {"$set": upd})
     return employee_out({"id": eid, **upd}, await positions_map())
 
@@ -403,6 +427,8 @@ async def delete_employee(eid: str, _=Depends(admin_only)):
     await db.employees.delete_one({"id": eid})
     await db.performance_entries.delete_many({"employee_id": eid})
     await db.infractions.delete_many({"employee_id": eid})
+    await db.sheet_entries.delete_many({"employee_id": eid})
+    await db.violation_entries.delete_many({"employee_id": eid})
     await db.users.delete_many({"employee_id": eid, "role": "employee"})
     return {"ok": True}
 
@@ -607,6 +633,152 @@ async def my_report(month: Optional[str] = None, user=Depends(current_user)):
         raise HTTPException(404, "حسابك غير مرتبط بملف موظف بعد")
     return await employee_report(user["employee_id"], month or current_month())
 
+# ------------------------------- Monthly sheet (Excel model) --------------
+MONTH_RE = r"^\d{4}-(0[1-9]|1[0-2])$"
+
+
+class SheetParamsIn(BaseModel):
+    pass_threshold: float = Field(ge=0, le=1)
+    w_hygiene: float = Field(ge=0)
+    w_respect: float = Field(ge=0)
+    loss_limit: float = Field(ge=0)
+    w_loss: float = Field(ge=0)
+    days_limit: float = Field(ge=0)
+    w_days: float = Field(ge=0)
+    rate_commercial: float = Field(ge=0)
+    share_commercial: float = Field(ge=0, le=1)
+    rate_finance: float = Field(ge=0)
+    share_finance: float = Field(ge=0, le=1)
+    price_meter: float = Field(ge=0)
+    share_cutting: float = Field(ge=0, le=1)
+    fund_ratio: float = Field(ge=0, le=1)
+    pool_rate: float = Field(ge=0, le=1)
+
+
+class SheetTurnoverIn(BaseModel):
+    month: str = Field(pattern=MONTH_RE)
+    turnover: Optional[float] = Field(default=None, ge=0)
+
+
+class SheetEntryIn(BaseModel):
+    month: str = Field(pattern=MONTH_RE)
+    employee_id: str
+    hygiene: Optional[float] = Field(default=None, ge=0, le=1)     # نسبة تفتيش 0..1
+    respect: Optional[Literal["نعم", "لا"]] = None
+    losses: Optional[float] = Field(default=None, ge=0)            # دج
+    days: Optional[float] = Field(default=None, ge=0)              # تأخرات + غيابات (أيام)
+    base: Optional[float] = Field(default=None, ge=0)              # رقم أعمال / مبالغ مستردة / أمتار
+
+
+class ViolationEntryIn(BaseModel):
+    month: str = Field(pattern=MONTH_RE)
+    employee_id: str
+    counts: dict[str, int] = {}
+    note: str = ""
+    follow_date: str = ""
+
+
+async def sheet_params_doc() -> dict:
+    d = await db.settings.find_one({"id": "sheet_params"}, {"_id": 0, "id": 0})
+    return sheet.merge_params(d)
+
+
+@api.get("/sheet/params")
+async def get_sheet_params(_=Depends(staff_only)):
+    return await sheet_params_doc()
+
+
+@api.put("/sheet/params")
+async def put_sheet_params(data: SheetParamsIn, _=Depends(admin_only)):
+    await db.settings.update_one({"id": "sheet_params"}, {"$set": {"id": "sheet_params", **data.model_dump()}}, upsert=True)
+    return await sheet_params_doc()
+
+
+async def build_sheet(month: str, only_employee: Optional[str] = None) -> dict:
+    params = await sheet_params_doc()
+    m = await db.sheet_months.find_one({"month": month}, {"_id": 0})
+    turnover = (m or {}).get("turnover")
+    emps = await db.employees.find({"$or": [{"status": "active"}, {"id": only_employee}]} if only_employee else {"status": "active"}, {"_id": 0}).sort("created_at", 1).to_list(2000)
+    entries = {x["employee_id"]: x for x in await db.sheet_entries.find({"month": month}, {"_id": 0}).to_list(2000)}
+    vio = {x["employee_id"]: x for x in await db.violation_entries.find({"month": month}, {"_id": 0}).to_list(2000)}
+    rows_in = []
+    for e in emps:
+        x = entries.get(e["id"], {})
+        rows_in.append({"id": e["id"], "name": e["full_name"], "perf_type": e.get("perf_type", "pool"),
+                        "post_weight": e.get("post_weight"), "hygiene": x.get("hygiene"), "respect": x.get("respect"),
+                        "losses": x.get("losses"), "days": x.get("days"), "base": x.get("base"),
+                        "violations": sum(int(v) for v in (vio.get(e["id"], {}).get("counts") or {}).values())})
+    res = sheet.calc_sheet(params, turnover, rows_in)
+    res["month"], res["turnover"] = month, turnover
+    return res
+
+
+@api.get("/sheet")
+async def get_sheet(month: Optional[str] = None, user=Depends(staff_only)):
+    res = await build_sheet(month or current_month())
+    if user["role"] != "admin":  # المراقب يرى النتائج والحالة دون المبالغ بالدينار
+        for r in res["rows"]:
+            for k in ("s", "t", "u"):
+                r[k] = None
+        res["totals"], res["pool"], res["turnover"] = None, None, None
+    return res
+
+
+@api.put("/sheet/turnover")
+async def put_sheet_turnover(data: SheetTurnoverIn, _=Depends(admin_only)):
+    await db.sheet_months.update_one({"month": data.month}, {"$set": {"month": data.month, "turnover": data.turnover}}, upsert=True)
+    return {"month": data.month, "turnover": data.turnover}
+
+
+@api.put("/sheet/entry")
+async def put_sheet_entry(data: SheetEntryIn, user=Depends(staff_only)):
+    emp = await db.employees.find_one({"id": data.employee_id}, {"_id": 0, "perf_type": 1})
+    if not emp:
+        raise HTTPException(404, "الموظف غير موجود")
+    doc = data.model_dump()
+    if emp.get("perf_type", "pool") == "pool":
+        doc["base"] = None  # العامل لا أساس عمولة له (يبقى عمود الأساس فارغًا كما في Excel)
+    if user["role"] != "admin":  # الأساس (رقم الأعمال/المسترد/الأمتار) من اختصاص المسير
+        old = await db.sheet_entries.find_one({"employee_id": data.employee_id, "month": data.month}, {"_id": 0, "base": 1})
+        doc["base"] = (old or {}).get("base")
+    doc["updated_at"] = now_utc()
+    await db.sheet_entries.update_one({"employee_id": data.employee_id, "month": data.month}, {"$set": doc}, upsert=True)
+    return {"ok": True}
+
+
+@api.get("/violations-log")
+async def get_violations_log(month: Optional[str] = None, _=Depends(staff_only)):
+    month = month or current_month()
+    emps = await db.employees.find({"status": "active"}, {"_id": 0}).sort("created_at", 1).to_list(2000)
+    ents = {x["employee_id"]: x for x in await db.violation_entries.find({"month": month}, {"_id": 0}).to_list(2000)}
+    rows = [{"employee_id": e["id"], "name": e["full_name"], "counts": ents.get(e["id"], {}).get("counts", {}),
+             "note": ents.get(e["id"], {}).get("note", ""), "follow_date": ents.get(e["id"], {}).get("follow_date", "")} for e in emps]
+    res = sheet.violations_summary(rows)
+    res.update(month=month, types=[{"code": c, "label": l} for c, l in sheet.VIOLATION_TYPES], alert_threshold=sheet.ALERT_THRESHOLD)
+    return res
+
+
+@api.put("/violations-log/entry")
+async def put_violation_entry(data: ViolationEntryIn, _=Depends(staff_only)):
+    if not await db.employees.find_one({"id": data.employee_id}, {"_id": 1}):
+        raise HTTPException(404, "الموظف غير موجود")
+    counts = {c: max(0, int(data.counts.get(c, 0) or 0)) for c in sheet.VIOLATION_CODES if int(data.counts.get(c, 0) or 0) > 0}
+    doc = {"employee_id": data.employee_id, "month": data.month, "counts": counts, "note": data.note, "follow_date": data.follow_date, "updated_at": now_utc()}
+    await db.violation_entries.update_one({"employee_id": data.employee_id, "month": data.month}, {"$set": doc}, upsert=True)
+    return {"ok": True, "counts": counts}
+
+
+@api.get("/me/sheet")
+async def my_sheet(month: Optional[str] = None, user=Depends(current_user)):
+    if not user.get("employee_id"):
+        raise HTTPException(404, "حسابك غير مرتبط بملف موظف بعد")
+    month = month or current_month()
+    res = await build_sheet(month, only_employee=user["employee_id"])
+    row = next((r for r in res["rows"] if r["id"] == user["employee_id"]), None)
+    if not row:
+        raise HTTPException(404, "الموظف غير موجود")
+    return {"month": month, "row": row, "params": res["params"]}
+
 # ------------------------------- Seed -------------------------------------
 
 
@@ -618,23 +790,29 @@ async def seed():
                                    "password_hash": hash_pw(os.environ["ADMIN_PASSWORD"]), "created_at": now_utc()})
     elif not bcrypt.checkpw(os.environ["ADMIN_PASSWORD"].encode(), admin["password_hash"].encode()):
         await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_pw(os.environ["ADMIN_PASSWORD"])}})
+    insp_email = os.environ.get("INSPECTOR_EMAIL", "inspector@company.dz").lower()
+    if not await db.users.find_one({"email": insp_email}):
+        await db.users.insert_one({"id": new_id(), "email": insp_email, "name": "المراقب", "role": "inspector",
+                                   "password_hash": hash_pw(os.environ.get("INSPECTOR_PASSWORD", "Inspector@123")), "created_at": now_utc()})
     if not await db.settings.find_one({"id": "global"}):
         await db.settings.insert_one(dict(DEFAULT_SETTINGS))
     if await db.positions.count_documents({}):
         return
     positions = [
-        {"id": new_id(), "name": "مسؤول مبيعات", "point_value": None, "kpis": [
+        {"id": new_id(), "name": "تجاري", "point_value": None, "kpis": [
             {"id": new_id(), "name": "رقم المبيعات اليومي", "weight": 50, "target": 40000, "unit": "دج"},
             {"id": new_id(), "name": "عدد الزبائن المخدومين", "weight": 30, "target": 25, "unit": "زبون"},
             {"id": new_id(), "name": "الانضباط والحضور", "weight": 20, "target": 1, "unit": "يوم"}]},
-        {"id": new_id(), "name": "كاشير", "point_value": None, "kpis": [
+        {"id": new_id(), "name": "مالية", "point_value": None, "kpis": [
             {"id": new_id(), "name": "دقة الصندوق", "weight": 40, "target": 100, "unit": "%"},
             {"id": new_id(), "name": "عدد العمليات", "weight": 35, "target": 120, "unit": "عملية"},
             {"id": new_id(), "name": "الانضباط والحضور", "weight": 25, "target": 1, "unit": "يوم"}]},
-        {"id": new_id(), "name": "مسؤول قص", "point_value": None, "kpis": [
+        {"id": new_id(), "name": "تقطيع", "point_value": None, "kpis": [
             {"id": new_id(), "name": "عدد القطع المنجزة", "weight": 50, "target": 200, "unit": "قطعة"},
             {"id": new_id(), "name": "جودة القص (بدون عيوب)", "weight": 30, "target": 100, "unit": "%"},
             {"id": new_id(), "name": "الانضباط والحضور", "weight": 20, "target": 1, "unit": "يوم"}]},
+        {"id": new_id(), "name": "عامل", "point_value": None, "kpis": [
+            {"id": new_id(), "name": "الانضباط والحضور", "weight": 100, "target": 1, "unit": "يوم"}]},
     ]
     await db.positions.insert_many([dict(p) for p in positions])
     types = [
@@ -646,18 +824,35 @@ async def seed():
         {"id": new_id(), "name": "سوء معاملة الزبون", "deduction_type": "percent", "value": 5, "active": True},
     ]
     await db.infraction_types.insert_many([dict(t) for t in types])
-    emps_spec = [("أحمد بن علي", "0550123456", "employee@company.dz", 0, 45000),
-                 ("سارة مرابط", "0661234567", None, 1, 38000),
-                 ("ياسين بوزيد", "0770345678", None, 2, 40000),
-                 ("فاطمة الزهراء قاسمي", "0555987654", None, 0, 42000)]
+    # الموظفون كما في جدول الأداء المعتمد: (الاسم، الهاتف، البريد، المنصب، الراتب، نوع الأداء، وزن المنصب)
+    emps_spec = [("أحمد (تجاري)", "0550123456", "employee@company.dz", 0, 45000, "commercial", None),
+                 ("محمد (تجاري)", "0661234567", None, 0, 42000, "commercial", None),
+                 ("عمر (مالية)", "0770345678", None, 1, 45000, "finance", None),
+                 ("يوسف (تقطيع)", "0555987654", None, 2, 40000, "cutting", None),
+                 ("عادل (تقطيع)", "0555111222", None, 2, 40000, "cutting", None),
+                 ("عون الصقل (عامل)", "0555333444", None, 3, 38000, "pool", 1),
+                 ("السائق (عامل)", "0555555666", None, 3, 38000, "pool", 1),
+                 ("عون الشحن (عامل)", "0555777888", None, 3, 38000, "pool", 1)]
+    sheet_sample = [  # (النظافة، الاحترام، الخسائر، الأيام، الأساس) — من أمثلة ملف Excel
+        (0.9, "نعم", 0, 0, 1500000), (1, "نعم", 0, 0, 2500000), (1, "نعم", 0, 0, 1500000),
+        (0.8, "نعم", 0, 1, 450), (1, "نعم", 0, 0, 380), (0.95, "نعم", 6000, 1, None),
+        (1, "نعم", 0, 0, None), (0.9, "لا", 12000, 2, None)]
     import random
     rnd = random.Random(7)
     today = date_cls.today()
-    for name, phone, email, pi, sal in emps_spec:
+    month = current_month()
+    await db.sheet_months.update_one({"month": month}, {"$set": {"month": month, "turnover": 4000000.0}}, upsert=True)
+    for (name, phone, email, pi, sal, ptype, pweight), sm in zip(emps_spec, sheet_sample):
         eid = new_id()
         await db.employees.insert_one({"id": eid, "full_name": name, "phone_enc": enc(phone), "email": email,
                                        "position_id": positions[pi]["id"], "hire_date": "2023-03-01",
-                                       "base_salary_enc": enc(sal), "status": "active", "created_at": now_utc()})
+                                       "base_salary_enc": enc(sal), "status": "active", "perf_type": ptype,
+                                       "post_weight": pweight, "created_at": now_utc()})
+        await db.sheet_entries.insert_one({"employee_id": eid, "month": month, "hygiene": sm[0], "respect": sm[1],
+                                           "losses": sm[2], "days": sm[3], "base": sm[4], "updated_at": now_utc()})
+        if sm[3] >= 1:
+            await db.violation_entries.insert_one({"employee_id": eid, "month": month, "counts": {"late": int(sm[3])},
+                                                   "note": "", "follow_date": "", "updated_at": now_utc()})
         if email:
             await sync_employee_user(eid, name, email, "Employee@123")
         for back in range(min(today.day - 1, 10), -1, -1):

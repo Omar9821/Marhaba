@@ -16,10 +16,12 @@ export default function SettingsCenter() {
   const [confirm, setConfirm] = useState(false);
   const go = (p: string) => router.push(p as any);
 
+  const isAdmin = user?.role === "admin";
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
-      <Header title="مركز الإعدادات" subtitle="تخصيص قواعد العمل بدون تعديل الكود" />
+      <Header title={isAdmin ? "مركز الإعدادات" : "حسابي"} subtitle={isAdmin ? "تخصيص قواعد العمل بدون تعديل الكود" : "المراقب"} />
       <ScrollView contentContainerStyle={{ padding: S.lg, gap: S.lg, paddingBottom: (usesNativeTabs ? insets.bottom : 0) + S.xl }}>
+        {isAdmin ? (<>
         <T variant="label" color="muted">البيانات الأساسية</T>
         <Card style={{ paddingVertical: S.xs }}>
           <SettingsRow testID="settings-employees-row" icon="people-outline" title="إدارة الموظفين" subtitle="إضافة، تعديل، أرشفة وحذف" onPress={() => go("/settings/employees")} />
@@ -27,14 +29,16 @@ export default function SettingsCenter() {
         </Card>
         <T variant="label" color="muted">قواعد الحساب</T>
         <Card style={{ paddingVertical: S.xs }}>
+          <SettingsRow testID="settings-sheet-params-row" icon="options-outline" title="معاملات جدول الأداء" subtitle="الأوزان، الحدود، نسب العمولة والمجمَّع والصندوق" onPress={() => go("/settings/sheet-params")} />
           <SettingsRow testID="settings-infractions-row" icon="warning-outline" title="المخالفات والخصومات" subtitle="أنواع المخالفات وقيم الخصم" onPress={() => go("/settings/infractions")} />
           <SettingsRow testID="settings-rules-row" icon="calculator-outline" title="المعاملات وقواعد المنح" subtitle="قيمة النقطة، المعامل، السقف والصناديق" onPress={() => go("/settings/rules")} last />
         </Card>
+        </>) : null}
         <T variant="label" color="muted">الحساب</T>
         <Card style={{ gap: S.md }}>
           <View>
             <T variant="h3">{user?.name}</T>
-            <T variant="caption">{user?.email} • مسير</T>
+            <T variant="caption">{user?.email} • {isAdmin ? "مسير" : "مراقب"}</T>
           </View>
           <Btn testID="logout-button" title="تسجيل الخروج" variant="outline" icon="log-out-outline" onPress={() => setConfirm(true)} />
         </Card>
