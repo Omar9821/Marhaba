@@ -5,8 +5,9 @@ export function num(n: number, digits = 0) {
   const v = Number.isFinite(n) ? n : 0;
   const fixed = Math.abs(v).toFixed(digits);
   const [int, dec] = fixed.split(".");
-  const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
-  return (v < 0 ? "-" : "") + grouped + (dec && Number(dec) !== 0 ? "." + dec : "");
+  const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, "\u00A0");
+  // العزل الاتجاهي (LRI…PDI): يمنع النص العربي من عكس ترتيب مجموعات الأرقام داخل الأسطر RTL (مثل «9 036 دج»)
+  return "\u2066" + (v < 0 ? "-" : "") + grouped + (dec && Number(dec) !== 0 ? "." + dec : "") + "\u2069";
 }
 export function money(n: number, currency = "دج") {
   return `${num(Math.round(n))} ${currency}`;
