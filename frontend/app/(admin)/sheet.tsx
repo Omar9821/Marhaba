@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pressable, RefreshControl, ScrollView, View } from "react-native";
+import { RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { mutate } from "@/src/api";
@@ -34,8 +34,8 @@ export default function SheetScreen() {
       toast(e?.message || "تعذر الحفظ", "error");
     }
   };
-  const saveEntry = (row: SheetRow, patch: Partial<Pick<SheetRow, "hygiene" | "respect" | "losses" | "days" | "base">>) =>
-    save("/sheet/entry", { month, employee_id: row.id, hygiene: row.hygiene, respect: row.respect, losses: row.losses, days: row.days, base: row.base, ...patch });
+  const saveEntry = (row: SheetRow, patch: Partial<Pick<SheetRow, "losses" | "base">>) =>
+    save("/sheet/entry", { month, employee_id: row.id, losses: row.losses, base: row.base, ...patch });
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
@@ -62,7 +62,7 @@ export default function SheetScreen() {
               </Row>
             </Card>
           ) : null}
-          <T variant="caption">الأصفر/الأزرق الفاتح = تكتبه أنت · الرمادي = يُحسب وحده. تُحفظ القيمة عند مغادرة الحقل.</T>
+          <T variant="caption">الأخضر الفاتح = تكتبه أنت (رقم الأعمال، الأساس، الخسائر) · الرمادي = يُحسب وحده. الهندام والاحترام والتأخرات تُحسب تلقائيًا من «سجل المخالفات». تُحفظ القيمة عند مغادرة الحقل.</T>
 
           {sh.rows.length === 0 ? <EmptyState icon="people-outline" title="لا يوجد موظفون نشطون" subtitle="أضف موظفين من الإعدادات" /> : null}
           {sh.rows.map((r, i) => {
@@ -79,26 +79,10 @@ export default function SheetScreen() {
                 </Row>
 
                 <Row style={{ flexWrap: "wrap", gap: S.sm }}>
-                  <CellInput testID={`sheet-hygiene-${i}`} label="الهندام والنظافة (نسبة التفتيش)" unit="%" scale={100} value={r.hygiene} onCommit={(v) => saveEntry(r, { hygiene: v })} />
-                  <View style={{ flex: 1, minWidth: 130, gap: S.xs }}>
-                    <T variant="caption">الاحترام</T>
-                    <Row style={{ gap: S.xs }}>
-                      {(["نعم", "لا"] as const).map((opt) => {
-                        const on = r.respect === opt;
-                        return (
-                          <Pressable key={opt} testID={`sheet-respect-${opt === "نعم" ? "yes" : "no"}-${i}`}
-                            onPress={() => saveEntry(r, { respect: on ? null : opt })}
-                            style={{ flex: 1, minHeight: 46, borderRadius: R.md, alignItems: "center", justifyContent: "center", borderWidth: 1,
-                              borderColor: on ? (opt === "نعم" ? colors.success : colors.error) : colors.border,
-                              backgroundColor: on ? (opt === "نعم" ? colors.success : colors.error) : colors.surfaceSecondary }}>
-                            <T variant="label" style={{ color: on ? colors.onSuccess : colors.onSurface }}>{opt}</T>
-                          </Pressable>
-                        );
-                      })}
-                    </Row>
-                  </View>
+                  <CalcCell label="الهندام والنظافة (من السجل)" value={(r.hits?.hygiene ?? 0) > 0 ? `راسب · ${r.hits?.hygiene} مخالفة` : "ناجح ✔"} />
+                  <CalcCell label="الاحترام (من السجل)" value={(r.hits?.respect ?? 0) > 0 ? `لا · ${r.hits?.respect} مخالفة` : "نعم ✔"} />
+                  <CalcCell label="التأخرات والغيابات (من السجل)" value={`${num(r.days ?? 0)} يوم`} />
                   <CellInput testID={`sheet-losses-${i}`} label="الخسائر" unit="دج" value={r.losses} onCommit={(v) => saveEntry(r, { losses: v })} />
-                  <CellInput testID={`sheet-days-${i}`} label="التأخرات والغيابات" unit="أيام" value={r.days} onCommit={(v) => saveEntry(r, { days: v })} />
                 </Row>
 
                 {isBase ? (

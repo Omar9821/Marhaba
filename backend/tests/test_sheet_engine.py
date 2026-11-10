@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from sheet_engine import calc_sheet, violations_summary  # noqa: E402
+from sheet_engine import calc_sheet, derive_inputs, merge_violation_map, violations_summary  # noqa: E402
 
 GOLDEN = json.loads((Path(__file__).parent / "sheet_golden.json").read_text(encoding="utf-8"))
 
@@ -35,3 +35,15 @@ def test_violations_summary():
                             {"employee_id": "c", "counts": {}}])
     assert s["total"] == 4 and s["employees_with"] == 2 and s["expected_alerts"] == 1
     assert {t["code"]: t["count"] for t in s["by_type"]}["late"] == 2
+
+
+def test_violations_feed_sheet():
+    vm = merge_violation_map({"phone": "none"})
+    d = derive_inputs(vm, {"late": 2, "absence": 1, "ppe": 1, "phone": 5})
+    assert d["days"] == 3 and d["hygiene"] == 0.0 and d["respect"] == "نعم"
+    assert derive_inputs(vm, {"verbal_violence": 1})["respect"] == "لا"
+    clean = derive_inputs(vm, {})
+    assert clean["days"] == 0 and clean["hygiene"] == 1.0 and clean["respect"] == "نعم"
+    row = {"name": "x", "perf_type": "pool", "post_weight": 1, "hygiene": d["hygiene"], "respect": d["respect"], "days": d["days"], "losses": None}
+    q = calc_sheet(None, 1000000, [row])["rows"][0]["q"]
+    assert abs(q - (0 + 0.04 + 0.08 * (1 - 3 / 4)) / (0.06 + 0.04 + 0.08)) < 1e-9

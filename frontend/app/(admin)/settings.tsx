@@ -24,14 +24,12 @@ export default function SettingsCenter() {
         {isAdmin ? (<>
         <T variant="label" color="muted">البيانات الأساسية</T>
         <Card style={{ paddingVertical: S.xs }}>
-          <SettingsRow testID="settings-employees-row" icon="people-outline" title="إدارة الموظفين" subtitle="إضافة، تعديل، أرشفة وحذف" onPress={() => go("/settings/employees")} />
-          <SettingsRow testID="settings-positions-row" icon="briefcase-outline" title="المناصب ومؤشرات الأداء" subtitle="المؤشرات، الأوزان والأهداف لكل منصب" onPress={() => go("/settings/positions")} last />
+          <SettingsRow testID="settings-employees-row" icon="people-outline" title="إدارة الموظفين" subtitle="إضافة، تعديل، أرشفة وحذف، نوع المردودية ووزن المنصب" onPress={() => go("/settings/employees")} last />
         </Card>
         <T variant="label" color="muted">قواعد الحساب</T>
         <Card style={{ paddingVertical: S.xs }}>
-          <SettingsRow testID="settings-sheet-params-row" icon="options-outline" title="معاملات جدول الأداء" subtitle="الأوزان، الحدود، نسب العمولة والمجمَّع والصندوق" onPress={() => go("/settings/sheet-params")} />
-          <SettingsRow testID="settings-infractions-row" icon="warning-outline" title="المخالفات والخصومات" subtitle="أنواع المخالفات وقيم الخصم" onPress={() => go("/settings/infractions")} />
-          <SettingsRow testID="settings-rules-row" icon="calculator-outline" title="المعاملات وقواعد المنح" subtitle="قيمة النقطة، المعامل، السقف والصناديق" onPress={() => go("/settings/rules")} last />
+          <SettingsRow testID="settings-sheet-params-row" icon="options-outline" title="معاملات جدول الأداء" subtitle="الأوزان، الحدود، العمولات، الصندوق، وأثر المخالفات" onPress={() => go("/settings/sheet-params")} last />
+          
         </Card>
         </>) : null}
         <T variant="label" color="muted">الحساب</T>

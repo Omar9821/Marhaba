@@ -139,6 +139,35 @@ VIOLATION_TYPES = [
     ("verbal_violence", "عنف لفظي"), ("smoking", "تدخين"),
 ]
 VIOLATION_CODES = [c for c, _ in VIOLATION_TYPES]
+# أثر كل نوع مخالفة على مؤشرات الجدول (قابل للتعديل من الإعدادات):
+#   days = التأخرات والغيابات (كل مخالفة = يوم) · hygiene = الهندام والنظافة · respect = الاحترام · none = لا يؤثر
+IMPACT_GROUPS = ("days", "hygiene", "respect", "none")
+DEFAULT_VIOLATION_MAP = {
+    "late": "days", "unauth_exit": "days", "absence": "days", "left_no_permission": "days",
+    "cleanliness": "hygiene", "ppe": "hygiene", "smoking": "hygiene",
+    "verbal_violence": "respect", "negligence": "respect", "phone": "respect",
+}
+
+
+def merge_violation_map(m: Optional[dict]) -> dict:
+    out = dict(DEFAULT_VIOLATION_MAP)
+    for k, v in (m or {}).items():
+        if k in out and v in IMPACT_GROUPS:
+            out[k] = v
+    return out
+
+
+def derive_inputs(vmap: dict, counts: Optional[dict]) -> dict:
+    """يحوّل عدّاد المخالفات الشهري إلى مدخلات الجدول: أيام، هندام/نظافة (نجاح كامل أو صفر)، احترام (نعم/لا)."""
+    hits = {"days": 0, "hygiene": 0, "respect": 0}
+    for code, n in (counts or {}).items():
+        g = vmap.get(code, "none")
+        if g in hits:
+            hits[g] += int(_n(n))
+    return {"days": float(hits["days"]), "hygiene": 0.0 if hits["hygiene"] else 1.0,
+            "respect": "لا" if hits["respect"] else "نعم", "hits": hits}
+
+
 ALERT_THRESHOLD = 3  # تنبيهات متوقعة (≥3 مخالفات)
 
 
