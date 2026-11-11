@@ -22,7 +22,7 @@ try {
   I18nManager.forceRTL(false);
 } catch {}
 
-const ADMIN_AREAS = ["(admin)", "settings", "employee"];
+const ADMIN_AREAS = ["(admin)", "settings", "employee", "hub"];
 
 function Gate() {
   const { user, loading } = useAuth();
@@ -37,9 +37,13 @@ function Gate() {
       if (first !== "login") router.replace("/login");
       return;
     }
+    if (user.role === "owner") { // المسؤول العام خارج أي فرع: البوابة العامة فقط
+      if (first !== "hub") router.replace("/hub" as any);
+      return;
+    }
     const staff = user.role === "admin" || user.role === "inspector";
     const home = (user.role === "admin" ? "/" : user.role === "inspector" ? "/sheet" : "/me") as any;
-    if (!first || first === "login" || (!staff && ADMIN_AREAS.includes(first)) || (staff && first === "(employee)")) {
+    if (!first || first === "login" || (!staff && ADMIN_AREAS.includes(first)) || (staff && first === "(employee)") || first === "hub") {
       router.replace(home);
     }
   }, [user, loading, segments, router]);

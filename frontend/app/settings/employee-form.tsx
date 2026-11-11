@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api, getCached } from "@/src/api";
 import { useApi } from "@/src/hooks";
 import { useTheme } from "@/src/theme";
-import { Employee, PERF_TYPE_LABEL, PerfType, Position } from "@/src/types";
+import { Employee, PerfType, Position, SheetParams, typeOf } from "@/src/types";
 import { Btn, Card, Chip, ConfirmSheet, Field, Header, Loading, Row, S, SwitchRow, T, useToast } from "@/src/ui";
 
 export default function EmployeeForm() {
@@ -17,8 +17,10 @@ export default function EmployeeForm() {
   const router = useRouter();
   const toast = useToast();
   const positions = useApi<Position[]>("/positions");
+  const params = useApi<SheetParams>("/sheet/params");
   const [ready, setReady] = useState(!id);
   const [f, setF] = useState({ full_name: "", phone: "", email: "", password: "", position_id: "", hire_date: "", base_salary: "", status: "active" as "active" | "inactive", perf_type: "pool" as PerfType, post_weight: "" });
+  const pickPosition = (p: Position) => setF((s) => (id ? { ...s, position_id: p.id } : { ...s, position_id: p.id, perf_type: p.perf_type ?? s.perf_type, post_weight: p.post_weight == null ? s.post_weight : String(p.post_weight) }));
   const [saving, setSaving] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const set = (k: keyof typeof f) => (v: any) => setF((s) => ({ ...s, [k]: v }));
@@ -32,7 +34,7 @@ export default function EmployeeForm() {
     }).catch(() => setReady(true));
   }, [id]);
   useEffect(() => {
-    if (!id && !f.position_id && positions.data?.length) setF((s) => ({ ...s, position_id: positions.data![0].id }));
+    if (!id && !f.position_id && positions.data?.length) { const p0 = positions.data[0]; setF((s) => ({ ...s, position_id: p0.id, perf_type: p0.perf_type ?? s.perf_type, post_weight: p0.post_weight == null ? s.post_weight : String(p0.post_weight) })); }
   }, [positions.data, id, f.position_id]);
 
   const save = async () => {
@@ -40,7 +42,7 @@ export default function EmployeeForm() {
     if (!f.position_id) return toast("اختر المنصب", "error");
     if (f.hire_date && !/^\d{4}-\d{2}-\d{2}$/.test(f.hire_date)) return toast("صيغة التاريخ: YYYY-MM-DD", "error");
     setSaving(true);
-    const body = { ...f, full_name: f.full_name.trim(), email: f.email.trim() || null, password: f.password || null, base_salary: parseFloat(f.base_salary.replace(",", ".")) || 0, post_weight: f.perf_type === "pool" && f.post_weight.trim() !== "" ? parseFloat(f.post_weight.replace(",", ".")) || 0 : null };
+    const body = { ...f, full_name: f.full_name.trim(), email: f.email.trim() || null, password: f.password || null, base_salary: parseFloat(f.base_salary.replace(",", ".")) || 0, post_weight: f.post_weight.trim() !== "" ? parseFloat(f.post_weight.replace(",", ".")) || 0 : null };
     try {
       if (id) await api.put(`/employees/${id}`, body);
       else await api.post("/employees", body);
@@ -69,7 +71,7 @@ export default function EmployeeForm() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
       <Header back title={id ? "تعديل موظف" : "موظف جديد"} />
-      {!ready || positions.loading ? (
+      {!ready || positions.loading || params.loading ? (
         <Loading />
       ) : (
         <>
@@ -85,23 +87,23 @@ export default function EmployeeForm() {
               <T variant="label" color="onSurfaceSecondary">المنصب / الوظيفة</T>
               <Row style={{ flexWrap: "wrap", gap: S.sm }}>
                 {(positions.data ?? []).map((p, i) => (
-                  <Chip key={p.id} testID={`position-option-${i}`} label={p.name} selected={f.position_id === p.id} onPress={() => set("position_id")(p.id)} />
+                  <Chip key={p.id} testID={`position-option-${i}`} label={p.name} selected={f.position_id === p.id} onPress={() => pickPosition(p)} />
                 ))}
               </Row>
               <Field testID="employee-salary-input" label="الراتب الأساسي (دج)" value={f.base_salary} onChangeText={set("base_salary")} keyboardType="decimal-pad" placeholder="40000" hint="يُخزن مشفراً في قاعدة البيانات" />
             </Card>
             <Card style={{ gap: S.md }}>
-              <T variant="h3">نوع المردودية (جدول الأداء)</T>
+              <T variant="h3">نوع العمولة والوزن (جدول الأداء)</T>
               <Row style={{ flexWrap: "wrap", gap: S.sm }}>
-                {(Object.keys(PERF_TYPE_LABEL) as PerfType[]).map((k) => (
-                  <Chip key={k} testID={`perf-type-${k}`} label={PERF_TYPE_LABEL[k]} selected={f.perf_type === k} onPress={() => set("perf_type")(k)} />
+                {(params.data?.commission_types ?? []).map((t) => (
+                  <Chip key={t.id} testID={`perf-type-${t.id}`} label={t.label} selected={f.perf_type === t.id} onPress={() => set("perf_type")(t.id)} />
                 ))}
               </Row>
-              {f.perf_type === "pool" ? (
-                <Field testID="employee-post-weight-input" label="وزن المنصب (للعمال فقط)" value={f.post_weight} onChangeText={set("post_weight")} keyboardType="decimal-pad" placeholder="1" hint="يُوزَّع المجمَّع بنسبة وزن كل منصب" />
-              ) : (
-                <T variant="caption">التجاري/المالية/التقطيع: عمولة = الأساس × النسبة (الأساس يكتبه المسير في جدول الأداء).</T>
-              )}
+              <Field testID="employee-post-weight-input" label="الوزن" value={f.post_weight} onChangeText={set("post_weight")} keyboardType="decimal-pad" placeholder="1"
+                hint="يُوزَّع المجمَّع بنسبة الوزن على من لا أساس عمولة له (العمال). يُملأ تلقائيًا من المنصب." />
+              {typeOf(params.data?.commission_types, f.perf_type)?.kind === "rate" ? (
+                <T variant="caption">عمولة على أساس: يكتب المسير الأساس ({typeOf(params.data?.commission_types, f.perf_type)?.base_label || "الأساس"}) في جدول الأداء.</T>
+              ) : null}
             </Card>
             <Card style={{ gap: S.md }}>
               <T variant="h3">حساب الدخول لبوابة الموظف</T>

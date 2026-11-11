@@ -7,7 +7,7 @@ import { currentMonth, money, num } from "@/src/format";
 import { useApi } from "@/src/hooks";
 import { usesNativeTabs } from "@/src/navigation";
 import { useTheme } from "@/src/theme";
-import { SheetParams, SheetRow, PERF_TYPE_LABEL } from "@/src/types";
+import { SheetParams, SheetRow, typeBaseLabel, typeLabel, typeOf } from "@/src/types";
 import { Card, EmptyState, ErrorView, Header, LineItem, Loading, MonthSwitcher, Pill, ProgressBar, S, SyncBadge, T } from "@/src/ui";
 
 const pct = (v: number | null) => (v === null ? "—" : `${num(v * 100, 1)}%`);
@@ -17,7 +17,7 @@ export default function MyPerformance() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const [month, setMonth] = useState(currentMonth());
-  const q = useApi<{ month: string; row: SheetRow; params: SheetParams }>(user?.employee_id ? `/me/sheet?month=${month}` : null);
+  const q = useApi<{ month: string; row: SheetRow; params: SheetParams; perms: Record<string, boolean> }>(user?.employee_id ? `/me/sheet?month=${month}` : null);
   const r = q.data?.row;
 
   return (
@@ -33,7 +33,7 @@ export default function MyPerformance() {
         <ScrollView contentContainerStyle={{ padding: S.lg, gap: S.lg, paddingBottom: (usesNativeTabs ? insets.bottom : 0) + S.xl }} refreshControl={<RefreshControl refreshing={q.refreshing} onRefresh={q.refresh} tintColor={colors.brandPrimary} />}>
           <MonthSwitcher month={month} onChange={setMonth} />
           <Card style={{ gap: S.sm }} testID="bonus-hero-card">
-            <T variant="label">المنحة المستحقة — {PERF_TYPE_LABEL[r.perf_type]}</T>
+            <T variant="label">المنحة المستحقة — {typeLabel(q.data?.params.commission_types, r.perf_type)}</T>
             <T testID="final-bonus-value" variant="num">{r.t === null ? "—" : money(r.t)}</T>
             <Row2 label="نتيجة الأداء" value={pct(r.q)} />
             <ProgressBar value={r.q ?? 0} />
@@ -46,6 +46,7 @@ export default function MyPerformance() {
             <LineItem label="الخسائر" value={r.losses === null ? "—" : `${money(r.losses)} (معامل ${r.g === null ? "—" : num(r.g, 3)})`} />
             <LineItem label="التأخرات والغيابات" value={r.days === null ? "—" : `${num(r.days)} يوم (معامل ${r.i === null ? "—" : num(r.i, 3)})`} />
             <LineItem label="مضاعف الأداء" value={pct(r.r)} />
+            {r.base !== null ? <LineItem label={typeBaseLabel(typeOf(q.data?.params.commission_types, r.perf_type))} value={num(r.base)} /> : null}
             <LineItem label="المنحة القصوى" value={r.s === null ? "—" : money(r.s)} />
             <LineItem label="المنحة المستحقة" value={r.t === null ? "—" : money(r.t)} strong />
             <LineItem label="مخالفات الشهر" value={String(r.violations)} tone={r.violations ? "error" : "muted"} />

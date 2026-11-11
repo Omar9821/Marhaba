@@ -18,6 +18,10 @@ export default function EmployeeTabs() {
           <NativeTabs.Trigger.Icon sf="person.crop.circle" />
           <NativeTabs.Trigger.Label>حسابي</NativeTabs.Trigger.Label>
         </NativeTabs.Trigger>
+        <NativeTabs.Trigger name="notices">
+          <NativeTabs.Trigger.Icon sf="megaphone.fill" />
+          <NativeTabs.Trigger.Label>الإعلانات</NativeTabs.Trigger.Label>
+        </NativeTabs.Trigger>
         <NativeTabs.Trigger name="infractions">
           <NativeTabs.Trigger.Icon sf="exclamationmark.triangle.fill" />
           <NativeTabs.Trigger.Label>المخالفات</NativeTabs.Trigger.Label>
@@ -45,6 +49,7 @@ export default function EmployeeTabs() {
       }}
     >
       <Tabs.Screen name="account" options={{ title: "حسابي", tabBarIcon: icon("person-circle-outline"), tabBarButtonTestID: "tab-account" } as any} />
+      <Tabs.Screen name="notices" options={{ title: "الإعلانات", tabBarIcon: icon("megaphone-outline"), tabBarButtonTestID: "tab-announcements" } as any} />
       <Tabs.Screen name="infractions" options={{ title: "المخالفات", tabBarIcon: icon("warning-outline"), tabBarButtonTestID: "tab-infractions" } as any} />
       <Tabs.Screen name="me" options={{ title: "أدائي", tabBarIcon: icon("bar-chart-outline"), tabBarButtonTestID: "tab-performance" } as any} />
     </Tabs>

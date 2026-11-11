@@ -24,13 +24,44 @@ DEFAULT_PARAMS = {
     "pool_rate": 0.01,         # G3  نسبة المجمَّع الموزَّع على العمال
 }
 
-# نوع المنصب -> (مفتاح النسبة/السعر، مفتاح الحصة المشروطة)
-PERF_TYPES = {
-    "commercial": ("rate_commercial", "share_commercial"),
-    "finance": ("rate_finance", "share_finance"),
-    "cutting": ("price_meter", "share_cutting"),
-}
-PERF_TYPE_LABELS = {"commercial": "تجاري", "finance": "مالية", "cutting": "تقطيع", "pool": "عامل (مجمَّع)"}
+# أنواع العمولة مرنة: كل نوع {id, label, kind: rate|pool, rate, share, base_label, unit}
+#   rate = عمولة على أساس يُدخله المسير (رقم أعمال/مبالغ مستردة/أمتار/…): المنحة القصوى = الأساس × rate
+#          والحصة المشروطة بالأداء = share
+#   pool = بلا أساس: يوزَّع عليه المجمَّع (رقم الأعمال × pool_rate) حسب وزن المنصب
+# القيم الافتراضية هي الأنواع الأربعة الأصلية في ملف Excel.
+DEFAULT_COMMISSION_TYPES = [
+    {"id": "commercial", "label": "تجاري", "kind": "rate", "rate": 0.004, "share": 0.4,
+     "base_label": "رقم الأعمال المحصَّل الصافي", "unit": "دج"},
+    {"id": "finance", "label": "مالية", "kind": "rate", "rate": 0.008, "share": 0.4,
+     "base_label": "المبالغ المستردة", "unit": "دج"},
+    {"id": "cutting", "label": "تقطيع", "kind": "rate", "rate": 0.0, "share": 0.4,
+     "base_label": "الأمتار المقطوعة", "unit": "متر"},
+    {"id": "pool", "label": "عامل (مجمَّع)", "kind": "pool", "rate": 0.0, "share": 0.0, "base_label": "", "unit": ""},
+]
+LEGACY_TYPE_KEYS = {"commercial": ("rate_commercial", "share_commercial"),
+                    "finance": ("rate_finance", "share_finance"),
+                    "cutting": ("price_meter", "share_cutting")}
+
+
+def clean_commission_types(lst) -> list:
+    """ينظّف قائمة الأنواع القادمة من الإعدادات (معرّفات فريدة، kind صالح، نسب ضمن الحدود). يضمن وجود نوع «pool»."""
+    out, seen = [], set()
+    for t in lst or []:
+        tid = str(t.get("id") or "").strip()
+        if not tid or tid in seen:
+            continue
+        seen.add(tid)
+        kind = "pool" if t.get("kind") == "pool" else "rate"
+        out.append({"id": tid, "label": str(t.get("label") or tid).strip() or tid, "kind": kind,
+                    "rate": max(0.0, _n(t.get("rate"))), "share": min(1.0, max(0.0, _n(t.get("share")))),
+                    "base_label": str(t.get("base_label") or "").strip(), "unit": str(t.get("unit") or "").strip()})
+    if not any(t["kind"] == "pool" for t in out):
+        out.append(dict(DEFAULT_COMMISSION_TYPES[3]))
+    return out
+
+
+def type_map(p: dict) -> dict:
+    return {t["id"]: t for t in p["commission_types"]}
 
 
 def _num(v) -> Optional[float]:
@@ -49,9 +80,14 @@ def _n(v) -> float:
     return 0.0 if x is None else x
 
 
-def _has_base(e: dict) -> bool:
-    """الصف صف عمولة فقط إذا كان نوعه تجاري/مالية/تقطيع وأُدخل الأساس (J/L/N رقم)."""
-    return (e.get("perf_type") or "pool") in PERF_TYPES and _num(e.get("base")) is not None
+def _is_rate_type(types: dict, ptype) -> bool:
+    t = types.get(ptype or "pool")
+    return bool(t and t["kind"] == "rate")
+
+
+def _has_base(e: dict, types: dict) -> bool:
+    """الصف صف عمولة فقط إذا كان نوعه من نوع «عمولة على أساس» وأُدخل الأساس."""
+    return _is_rate_type(types, e.get("perf_type")) and _num(e.get("base")) is not None
 
 
 def merge_params(p: Optional[dict]) -> dict:
@@ -59,6 +95,17 @@ def merge_params(p: Optional[dict]) -> dict:
     for k in DEFAULT_PARAMS:
         if p and p.get(k) is not None:
             out[k] = float(p[k])
+    if p and p.get("commission_types"):
+        out["commission_types"] = clean_commission_types(p["commission_types"])
+    else:  # توافق مع الإصدار السابق: الأنواع الثلاثة تأخذ نسبها من المفاتيح القديمة
+        types = []
+        for t in DEFAULT_COMMISSION_TYPES:
+            t = dict(t)
+            if t["id"] in LEGACY_TYPE_KEYS:
+                rk, sk = LEGACY_TYPE_KEYS[t["id"]]
+                t["rate"], t["share"] = out[rk], out[sk]
+            types.append(t)
+        out["commission_types"] = types
     return out
 
 
@@ -67,8 +114,10 @@ def calc_row(p: dict, e: dict, pool_total_w: float, pool: float) -> dict:
     يعيد المعاملات (C,E,G,I) والنتيجة Q والمضاعف R والمنحة القصوى S والمستحقة T والفرق U والحالة V."""
     hyg, resp = _num(e.get("hygiene")), e.get("respect")
     loss, days = _num(e.get("losses")), _num(e.get("days"))
+    types = type_map(p)
     ptype = e.get("perf_type") or "pool"
-    base = _num(e.get("base")) if ptype in PERF_TYPES else None
+    ctype = types.get(ptype) if _is_rate_type(types, ptype) else None
+    base = _num(e.get("base")) if ctype else None
     pw = _num(e.get("post_weight"))
 
     c = None if hyg is None else (p["w_hygiene"] if hyg >= p["pass_threshold"] else 0.0)
@@ -84,17 +133,16 @@ def calc_row(p: dict, e: dict, pool_total_w: float, pool: float) -> dict:
     filled = [(v, w) for v, w in parts if v is not None]
     q = None if not filled else sum(v for v, _ in filled) / sum(w for _, w in filled)
 
-    rate_key = share = None
-    if ptype in PERF_TYPES:
-        rate_key, share_key = PERF_TYPES[ptype]
-        share = p[share_key]
+    rate = share = None
+    if ctype:
+        rate, share = ctype["rate"], ctype["share"]
     r = None
     if q is not None:
         r = (1 - share) + share * q if base is not None else q
 
     s = None
     if base is not None:
-        s = base * p[rate_key]
+        s = base * rate
     elif pw is not None and pool_total_w > 0 and pool > 0:
         s = pool * pw / pool_total_w
     t = s * r if (s is not None and r is not None) else None
@@ -103,7 +151,7 @@ def calc_row(p: dict, e: dict, pool_total_w: float, pool: float) -> dict:
     if q is None:
         status = "أدخل نتائج المؤشرات"
     elif base is not None:
-        status = "حدّد النسبة / سعر المتر في صف المعاملات" if _n(p[rate_key]) == 0 else "✔"
+        status = "حدّد النسبة / سعر المتر في صف المعاملات" if _n(rate) == 0 else "✔"
     elif pw is None:
         status = "أدخل وزن المنصب"
     elif pool == 0:
@@ -118,7 +166,8 @@ def calc_sheet(params: Optional[dict], turnover, employees: list) -> dict:
     p = merge_params(params)
     pool = _n(turnover) * p["pool_rate"]                                   # K3
     # O3: مجموع أوزان الصفوف التي ليس لها أساس عمولة
-    pool_w = sum(_n(e.get("post_weight")) for e in employees if not _has_base(e))
+    tmap = type_map(p)
+    pool_w = sum(_n(e.get("post_weight")) for e in employees if not _has_base(e, tmap))
     rows = []
     for e in employees:
         res = calc_row(p, e, pool_w, pool)
@@ -132,21 +181,19 @@ def calc_sheet(params: Optional[dict], turnover, employees: list) -> dict:
 
 
 # ------------------------------ سجل المخالفات ------------------------------
-VIOLATION_TYPES = [
-    ("late", "تأخر"), ("unauth_exit", "خروج غير مرخص"), ("phone", "هاتف"),
-    ("cleanliness", "نظافة/ترتيب"), ("ppe", "معدات حماية"), ("absence", "غياب غير مبرر"),
-    ("left_no_permission", "مغادرة دون إذن"), ("negligence", "إهمال متعمد"),
-    ("verbal_violence", "عنف لفظي"), ("smoking", "تدخين"),
-]
-VIOLATION_CODES = [c for c, _ in VIOLATION_TYPES]
-# أثر كل نوع مخالفة على مؤشرات الجدول (قابل للتعديل من الإعدادات):
-#   days = التأخرات والغيابات (كل مخالفة = يوم) · hygiene = الهندام والنظافة · respect = الاحترام · none = لا يؤثر
+# أنواع المخالفات قابلة للتعديل من الإعدادات: [{code, label, impact, active}]
+# impact: days = التأخرات والغيابات (كل مخالفة = يوم) · hygiene = الهندام والنظافة · respect = الاحترام · none = لا يؤثر
 IMPACT_GROUPS = ("days", "hygiene", "respect", "none")
-DEFAULT_VIOLATION_MAP = {
-    "late": "days", "unauth_exit": "days", "absence": "days", "left_no_permission": "days",
-    "cleanliness": "hygiene", "ppe": "hygiene", "smoking": "hygiene",
-    "verbal_violence": "respect", "negligence": "respect", "phone": "respect",
-}
+_DEFAULT_V = [
+    ("late", "تأخر", "days"), ("unauth_exit", "خروج غير مرخص", "days"), ("phone", "هاتف", "respect"),
+    ("cleanliness", "نظافة/ترتيب", "hygiene"), ("ppe", "معدات حماية", "hygiene"), ("absence", "غياب غير مبرر", "days"),
+    ("left_no_permission", "مغادرة دون إذن", "days"), ("negligence", "إهمال متعمد", "respect"),
+    ("verbal_violence", "عنف لفظي", "respect"), ("smoking", "تدخين", "hygiene"),
+]
+DEFAULT_VIOLATION_TYPES = [{"code": c, "label": l, "impact": g, "active": True} for c, l, g in _DEFAULT_V]
+VIOLATION_TYPES = [(c, l) for c, l, _ in _DEFAULT_V]          # للتوافق مع الاختبارات
+VIOLATION_CODES = [c for c, _ in VIOLATION_TYPES]
+DEFAULT_VIOLATION_MAP = {c: g for c, _, g in _DEFAULT_V}
 
 
 def merge_violation_map(m: Optional[dict]) -> dict:
@@ -155,6 +202,30 @@ def merge_violation_map(m: Optional[dict]) -> dict:
         if k in out and v in IMPACT_GROUPS:
             out[k] = v
     return out
+
+
+def clean_violation_types(lst) -> list:
+    out, seen = [], set()
+    for t in lst or []:
+        code = str(t.get("code") or "").strip()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        out.append({"code": code, "label": str(t.get("label") or code).strip() or code,
+                    "impact": t.get("impact") if t.get("impact") in IMPACT_GROUPS else "none",
+                    "active": t.get("active") is not False})
+    return out
+
+
+def merge_violation_types(stored: Optional[list], legacy_map: Optional[dict] = None) -> list:
+    if stored:
+        return clean_violation_types(stored)
+    vm = merge_violation_map(legacy_map)
+    return [{**t, "impact": vm.get(t["code"], t["impact"])} for t in DEFAULT_VIOLATION_TYPES]
+
+
+def impact_map(vtypes: list) -> dict:
+    return {t["code"]: t["impact"] for t in vtypes}
 
 
 def derive_inputs(vmap: dict, counts: Optional[dict]) -> dict:
@@ -171,16 +242,19 @@ def derive_inputs(vmap: dict, counts: Optional[dict]) -> dict:
 ALERT_THRESHOLD = 3  # تنبيهات متوقعة (≥3 مخالفات)
 
 
-def violations_summary(rows: list) -> dict:
+def violations_summary(rows: list, vtypes: Optional[list] = None) -> dict:
     """rows: [{employee_id, counts:{code:int}}]. يطابق L (المجموع) وصف 20 والملخص الشهري."""
-    out_rows, col = [], {c: 0 for c in VIOLATION_CODES}
+    vtypes = vtypes or DEFAULT_VIOLATION_TYPES
+    codes = [t["code"] for t in vtypes]
+    labels = {t["code"]: t["label"] for t in vtypes}
+    out_rows, col = [], {c: 0 for c in codes}
     for r in rows:
-        counts = {c: int(_n((r.get("counts") or {}).get(c))) for c in VIOLATION_CODES}
+        counts = {c: int(_n((r.get("counts") or {}).get(c))) for c in codes}
         total = sum(counts.values())
         for c, v in counts.items():
             col[c] += v
         out_rows.append({**r, "counts": counts, "total": total})
     grand = sum(col.values())
-    return {"rows": out_rows, "by_type": [{"code": c, "label": l, "count": col[c]} for c, l in VIOLATION_TYPES],
+    return {"rows": out_rows, "by_type": [{"code": c, "label": labels[c], "count": col[c]} for c in codes],
             "total": grand, "employees_with": sum(1 for r in out_rows if r["total"] > 0),
             "expected_alerts": sum(1 for r in out_rows if r["total"] >= ALERT_THRESHOLD)}

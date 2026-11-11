@@ -3,7 +3,7 @@ import * as WebBrowser from "expo-web-browser";
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
 
-import { api, loadToken, NetworkError, setToken, setUnauthorizedHandler } from "@/src/api";
+import { api, loadBranch, loadToken, NetworkError, setBranchId, setToken, setUnauthorizedHandler } from "@/src/api";
 import { User } from "@/src/types";
 import { storage } from "@/src/utils/storage";
 
@@ -15,6 +15,8 @@ type Ctx = {
   loginEmail: (email: string, password: string) => Promise<void>;
   loginGoogle: () => Promise<void>;
   logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
+  enterBranch: (id: string | null) => Promise<void>;
 };
 const AuthCtx = createContext<Ctx>(null as unknown as Ctx);
 
@@ -67,6 +69,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           }
         }
         const t = await loadToken();
+        await loadBranch();
         if (!t) return;
         try {
           await applyUser(await api.get("/auth/me"));
@@ -92,6 +95,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loginEmail = useCallback(
     async (email: string, password: string) => {
+      await setBranchId(null);
       const r = await api.post("/auth/login", { email, password });
       await setToken(r.token);
       await applyUser(r.user);
@@ -120,14 +124,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [exchange]);
 
+  const refreshUser = useCallback(async () => {
+    applyUser(await api.get("/auth/me"));
+  }, [applyUser]);
+
+  /** المسؤول العام: الدخول إلى فرع (id) أو العودة إلى البوابة العامة (null). */
+  const enterBranch = useCallback(async (id: string | null) => {
+    await setBranchId(id);
+    await refreshUser();
+  }, [refreshUser]);
+
   const logout = useCallback(async () => {
     await api.post("/auth/logout").catch(() => {});
+    await setBranchId(null);
     await setToken(null);
     await storage.removeItem(USER_KEY);
     setUser(null);
   }, []);
 
-  return <AuthCtx.Provider value={{ user, loading, loginEmail, loginGoogle, logout }}>{children}</AuthCtx.Provider>;
+  return <AuthCtx.Provider value={{ user, loading, loginEmail, loginGoogle, logout, refreshUser, enterBranch }}>{children}</AuthCtx.Provider>;
 }
 
 export const useAuth = () => useContext(AuthCtx);

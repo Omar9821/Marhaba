@@ -4,10 +4,12 @@ import { storage } from "@/src/utils/storage";
 
 const BASE = `${process.env.EXPO_PUBLIC_BACKEND_URL}/api`;
 const TOKEN_KEY = "auth_token";
+const BRANCH_KEY = "active_branch";
 const OUTBOX_KEY = "outbox_v1";
 const CACHE_PREFIX = "cache_v1_";
 
 let token: string | null = null;
+let branchId: string | null = null;
 let onUnauthorized: (() => void) | null = null;
 
 export class ApiError extends Error {
@@ -36,12 +38,28 @@ export async function setToken(t: string | null) {
   else await storage.secureRemove(TOKEN_KEY);
 }
 
+export const getBranchId = () => branchId;
+export async function loadBranch() {
+  branchId = ((await storage.getItem(BRANCH_KEY, null)) as string | null) || null;
+  return branchId;
+}
+/** المسؤول العام يدخل فرعًا: كل الطلبات التالية تحمل ترويسة X-Branch. */
+export async function setBranchId(id: string | null) {
+  branchId = id;
+  if (id) await storage.setItem(BRANCH_KEY, id);
+  else await storage.removeItem(BRANCH_KEY);
+}
+
+// الطلبات الأولى (عند فتح الصفحة مباشرة) تنتظر تحميل الرمز والفرع المحفوظين حتى لا تُرسل بلا ترويسات
+const initDone: Promise<unknown> = Promise.all([loadToken(), loadBranch()]).catch(() => {});
+
 async function raw(method: string, path: string, body?: unknown) {
+  await initDone;
   let res: Response;
   try {
     res = await fetch(BASE + path, {
       method,
-      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(branchId ? { "X-Branch": branchId } : {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   } catch {
