@@ -859,7 +859,7 @@ async def seed():
             await db.violation_entries.insert_one({"employee_id": eid, "month": month, "counts": {"late": int(sm[3])},
                                                    "note": "", "follow_date": "", "updated_at": now_utc()})
         if email:
-            await sync_employee_user(eid, name, email, "Employee@123")
+            await sync_employee_user(eid, name, email, os.environ.get("EMPLOYEE_DEMO_PASSWORD", "Employee@123"))
         for back in range(min(today.day - 1, 10), -1, -1):
             d = (today - timedelta(days=back)).isoformat()
             for k in positions[pi]["kpis"]:
