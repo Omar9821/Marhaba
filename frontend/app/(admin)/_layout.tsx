@@ -1,5 +1,6 @@
 import Ionicons from "@react-native-vector-icons/ionicons";
 import { Tabs } from "expo-router";
+import { useEffect } from "react";
 import { NativeTabs } from "expo-router/unstable-native-tabs";
 import { Platform } from "react-native";
 
@@ -13,8 +14,15 @@ export const unstable_settings = { initialRouteName: "sheet" };
 // Declared right-to-left visually: the first trigger sits on the left, so home is declared last.
 export default function AdminTabs() {
   const { colors } = useTheme();
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
   const isAdmin = user?.role === "admin";
+  const perms = user?.perms ?? {};
+  // قبل تحميل المستخدم تبقى كل الصفحات متاحة (حتى لا يضيع الرابط المباشر)، ثم تُخفى حسب الصلاحيات
+  const known = !!user;
+  const showAnn = !known || isAdmin || !!perms.view_announcements || !!perms.send_announcements;
+  const showVio = isAdmin || perms.view_violations !== false;
+  const showSheet = isAdmin || perms.view_sheet !== false;
+  useEffect(() => { refreshUser().catch(() => {}); }, []); // eslint-disable-line react-hooks/exhaustive-deps — يجلب الصلاحيات الحديثة عند الفتح
   if (usesNativeTabs) {
     return (
       <NativeTabs tintColor={colors.brandPrimary}>
@@ -30,11 +38,15 @@ export default function AdminTabs() {
           <NativeTabs.Trigger.Icon sf="square.and.pencil" />
           <NativeTabs.Trigger.Label>الإدخال</NativeTabs.Trigger.Label>
         </NativeTabs.Trigger>
-        <NativeTabs.Trigger name="violations">
+        <NativeTabs.Trigger name="announcements" hidden={!showAnn}>
+          <NativeTabs.Trigger.Icon sf="megaphone.fill" />
+          <NativeTabs.Trigger.Label>الإعلانات</NativeTabs.Trigger.Label>
+        </NativeTabs.Trigger>
+        <NativeTabs.Trigger name="violations" hidden={!showVio}>
           <NativeTabs.Trigger.Icon sf="exclamationmark.triangle.fill" />
           <NativeTabs.Trigger.Label>المخالفات</NativeTabs.Trigger.Label>
         </NativeTabs.Trigger>
-        <NativeTabs.Trigger name="sheet">
+        <NativeTabs.Trigger name="sheet" hidden={!showSheet}>
           <NativeTabs.Trigger.Icon sf="tablecells.fill" />
           <NativeTabs.Trigger.Label>الأداء</NativeTabs.Trigger.Label>
         </NativeTabs.Trigger>
@@ -63,9 +75,10 @@ export default function AdminTabs() {
       <Tabs.Screen name="settings" options={{ title: "الإعدادات", tabBarIcon: icon("settings-outline"), tabBarButtonTestID: "tab-settings" } as any} />
       <Tabs.Screen name="reports" options={{ href: null, title: "التقارير" } as any} />
       <Tabs.Screen name="entry" options={{ href: null, title: "الإدخال" } as any} />
-      <Tabs.Screen name="violations" options={{ title: "المخالفات", tabBarIcon: icon("warning-outline"), tabBarButtonTestID: "tab-violations" } as any} />
-      <Tabs.Screen name="sheet" options={{ title: "الأداء", tabBarIcon: icon("grid-outline"), tabBarButtonTestID: "tab-sheet" } as any} />
-      <Tabs.Screen name="index" options={{ href: isAdmin ? undefined : null, title: "الرئيسية", tabBarIcon: icon("home-outline"), tabBarButtonTestID: "tab-home" } as any} />
+      <Tabs.Screen name="announcements" options={{ href: showAnn ? undefined : null, title: "الإعلانات", tabBarIcon: icon("megaphone-outline"), tabBarButtonTestID: "tab-announcements" } as any} />
+      <Tabs.Screen name="violations" options={{ href: showVio ? undefined : null, title: "المخالفات", tabBarIcon: icon("warning-outline"), tabBarButtonTestID: "tab-violations" } as any} />
+      <Tabs.Screen name="sheet" options={{ href: showSheet ? undefined : null, title: "الأداء", tabBarIcon: icon("grid-outline"), tabBarButtonTestID: "tab-sheet" } as any} />
+      <Tabs.Screen name="index" options={{ href: !known || isAdmin ? undefined : null, title: "الرئيسية", tabBarIcon: icon("home-outline"), tabBarButtonTestID: "tab-home" } as any} />
     </Tabs>
   );
 }

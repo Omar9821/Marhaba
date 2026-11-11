@@ -2,7 +2,8 @@ import asyncio
 import logging
 import os
 import uuid
-from contextlib import suppress
+from contextlib import contextmanager, suppress
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone, date as date_cls
 from pathlib import Path
 from typing import List, Literal, Optional
@@ -24,7 +25,39 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-db = client[os.environ["DB_NAME"]]
+MAIN_DB_NAME = os.environ["DB_NAME"]
+hub_db = client[MAIN_DB_NAME + "__hub"]   # قاعدة «البوابة العامة»: الفروع + حسابات المسؤول العام
+
+# كل فرع = قاعدة بيانات مستقلة (إعداداته وموظفوه ومخالفاته…). `db` وكيل يختار قاعدة الفرع الحالي من سياق الطلب.
+_branch_db: ContextVar[Optional[str]] = ContextVar("branch_db", default=None)
+
+
+class BranchDB:
+    def _d(self):
+        name = _branch_db.get()
+        if not name:
+            raise HTTPException(400, "اختر فرعًا أولًا")
+        return client[name]
+
+    def __getattr__(self, name):
+        return self._d()[name]
+
+    def __getitem__(self, name):
+        return self._d()[name]
+
+
+db = BranchDB()
+
+
+@contextmanager
+def use_branch(db_name: str):
+    tok = _branch_db.set(db_name)
+    try:
+        yield
+    finally:
+        _branch_db.reset(tok)
+
+
 JWT_SECRET = os.environ["JWT_SECRET"]
 FERNET = Fernet(os.environ["ENCRYPTION_KEY"].encode())
 EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
@@ -43,7 +76,12 @@ logger = logging.getLogger(__name__)
 #   settings (id:"sheet_params")  معاملات «جدول الأداء والمردودية» (انظر sheet_engine.DEFAULT_PARAMS)
 #   sheet_months       {month, turnover}                              رقم أعمال الشركة المحصَّل الصافي
 #   sheet_entries      {employee_id, month, hygiene, respect, losses, days, base}  unique(employee_id,month)
-#   violation_entries  {employee_id, month, counts:{code:int}, note, follow_date}  unique(employee_id,month)
+#   violation_entries  (قديم، يُرحَّل إلى violation_logs)
+#   violation_logs     {employee_id, date, month, counts:{code:int}, loss (دج), note}  unique(employee_id,date)
+#                      ← عدة تفتيشات في الشهر: كل تاريخ سجل مستقل، والشهر = مجموعها
+#   announcements      {id, title, body, audience: all|employees|inspectors|selected, employee_ids, created_by, read_by:[user_id]}
+#   settings (id:"permissions")  صلاحيات المراقب والعامل (انظر DEFAULT_PERMS)
+# قاعدة البوابة (…__hub): branches {id, name, activity, db_name, active} · owners {id, email, name, password_hash}
 #   infraction_types   {id, name, deduction_type: points|percent|amount, value, active}
 #   performance_entries{id, employee_id, date, kpi_id, target, achieved}  unique(employee_id,date,kpi_id)
 #   infractions        {id, employee_id, type_id, date, note}
@@ -62,6 +100,10 @@ INDEXES: dict[str, list[IndexModel]] = {
     "sheet_months": [IndexModel([("month", ASCENDING)], name="month", unique=True)],
     "sheet_entries": [IndexModel([("employee_id", ASCENDING), ("month", ASCENDING)], name="emp_month", unique=True)],
     "violation_entries": [IndexModel([("employee_id", ASCENDING), ("month", ASCENDING)], name="emp_month", unique=True)],
+    "violation_logs": [IndexModel([("employee_id", ASCENDING), ("date", ASCENDING)], name="emp_date", unique=True),
+                       IndexModel([("month", ASCENDING)], name="month")],
+    "announcements": [IndexModel([("id", ASCENDING)], name="id", unique=True),
+                      IndexModel([("created_at", DESCENDING)], name="created")],
     "infractions": [IndexModel([("id", ASCENDING)], name="id", unique=True),
                     IndexModel([("employee_id", ASCENDING), ("date", DESCENDING)], name="emp_date"),
                     IndexModel([("date", DESCENDING)], name="date")],
@@ -107,7 +149,12 @@ async def health():
     return {"status": "ok"}
 
 
-api = APIRouter(prefix="/api")
+async def _branch_dep(request: Request) -> None:
+    await resolve_branch(request)
+
+
+api = APIRouter(prefix="/api", dependencies=[Depends(_branch_dep)])
+hub = APIRouter(prefix="/api/hub")
 
 # ------------------------------- Models -----------------------------------
 DeductionType = Literal["points", "percent", "amount"]
@@ -125,6 +172,8 @@ class PositionIn(BaseModel):
     name: str = Field(min_length=1)
     point_value: Optional[float] = None
     kpis: List[KPI] = []
+    perf_type: str = "pool"                                    # نوع العمولة الافتراضي لهذا المنصب (من أنواع العمولة)
+    post_weight: Optional[float] = Field(default=None, ge=0)   # وزن المنصب الافتراضي
 
 
 class EmployeeIn(BaseModel):
@@ -136,7 +185,7 @@ class EmployeeIn(BaseModel):
     hire_date: str = ""
     base_salary: float = 0
     status: Literal["active", "inactive"] = "active"
-    perf_type: Literal["commercial", "finance", "cutting", "pool"] = "pool"
+    perf_type: str = Field(default="pool", min_length=1)
     post_weight: Optional[float] = Field(default=None, ge=0)
 
 
@@ -204,9 +253,121 @@ def hash_pw(p: str) -> str:
     return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
 
 
-def make_jwt(user_id: str) -> str:
+def make_jwt(user_id: str, branch: Optional[str] = None, owner: bool = False) -> str:
     n = now_utc()
-    return jwt.encode({"sub": user_id, "iat": n, "exp": n + timedelta(days=7), "typ": "access"}, JWT_SECRET, algorithm="HS256")
+    claims = {"sub": user_id, "iat": n, "exp": n + timedelta(days=7), "typ": "access"}
+    if owner:
+        claims["owner"] = True
+    if branch:
+        claims["branch"] = branch
+    return jwt.encode(claims, JWT_SECRET, algorithm="HS256")
+
+
+def decode_token(request: Request) -> Optional[dict]:
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    try:
+        return jwt.decode(auth[7:], JWT_SECRET, algorithms=["HS256"])
+    except jwt.InvalidTokenError:
+        return None
+
+
+# ---- الفروع (بوابة المسؤول العام) ----
+_branch_cache: dict = {}
+
+
+async def get_branch(bid: str) -> Optional[dict]:
+    hit = _branch_cache.get(bid)
+    if hit and hit[0] > now_utc().timestamp():
+        return hit[1]
+    b = await hub_db.branches.find_one({"id": bid}, {"_id": 0})
+    _branch_cache[bid] = (now_utc().timestamp() + 60, b)
+    return b
+
+
+def forget_branch(bid: str) -> None:
+    _branch_cache.pop(bid, None)
+
+
+async def resolve_branch(request: Request) -> None:
+    """يحدّد فرع الطلب: مستخدم الفرع من الـJWT، والمسؤول العام من ترويسة X-Branch.
+    رموز Google والرموز القديمة (بلا فرع) تُوجَّه إلى الفرع الأول (main)."""
+    payload = decode_token(request)
+    if payload and payload.get("owner"):
+        bid = request.headers.get("X-Branch")
+        if not bid:
+            return
+    else:
+        bid = (payload or {}).get("branch") or "main"
+    b = await get_branch(bid)
+    if not b or not b.get("active", True):
+        raise HTTPException(403, "هذا الفرع غير متاح")
+    _branch_db.set(b["db_name"])
+
+
+# ---- الصلاحيات القابلة للتعديل (للمراقب والعامل) ----
+DEFAULT_PERMS = {
+    "inspector": {
+        "view_sheet": True, "view_amounts": False, "view_turnover": False, "view_base": False,
+        "edit_base": False, "edit_turnover": False, "view_violations": True, "edit_violations": True,
+        "enter_losses": True, "view_contacts": False, "view_announcements": True, "send_announcements": False,
+    },
+    "employee": {"view_amounts": True, "view_base": True, "view_violations": True, "view_announcements": True},
+}
+PERM_SCHEMA = [
+    {"role": "inspector", "key": "view_sheet", "label": "رؤية جدول الأداء (النتائج)"},
+    {"role": "inspector", "key": "view_amounts", "label": "رؤية مبالغ المنح بالدينار"},
+    {"role": "inspector", "key": "view_turnover", "label": "رؤية رقم أعمال الشركة المحصَّل"},
+    {"role": "inspector", "key": "view_base", "label": "رؤية أساس العمولة لكل عامل (رقم الأعمال/المسترد/الأمتار)"},
+    {"role": "inspector", "key": "edit_base", "label": "تعديل أساس العمولة"},
+    {"role": "inspector", "key": "edit_turnover", "label": "تعديل رقم أعمال الشركة"},
+    {"role": "inspector", "key": "view_violations", "label": "رؤية سجل المخالفات"},
+    {"role": "inspector", "key": "edit_violations", "label": "تسجيل المخالفات والتفتيشات"},
+    {"role": "inspector", "key": "enter_losses", "label": "تسجيل مبالغ الخسائر"},
+    {"role": "inspector", "key": "view_contacts", "label": "رؤية الهواتف والرواتب"},
+    {"role": "inspector", "key": "view_announcements", "label": "رؤية الإعلانات"},
+    {"role": "inspector", "key": "send_announcements", "label": "إرسال الإعلانات"},
+    {"role": "employee", "key": "view_amounts", "label": "رؤية مبلغ منحته بالدينار"},
+    {"role": "employee", "key": "view_base", "label": "رؤية رقم أعماله المحقق (أساس عمولته)"},
+    {"role": "employee", "key": "view_violations", "label": "رؤية مخالفاته وتفاصيل مؤشراته"},
+    {"role": "employee", "key": "view_announcements", "label": "رؤية الإعلانات"},
+]
+
+
+async def get_perms() -> dict:
+    d = await db.settings.find_one({"id": "permissions"}, {"_id": 0}) or {}
+    out = {}
+    for role, defaults in DEFAULT_PERMS.items():
+        out[role] = {k: bool((d.get(role) or {}).get(k, v)) for k, v in defaults.items()}
+    return out
+
+
+async def perms_for(user: dict) -> dict:
+    if user["role"] == "admin":
+        return {k: True for k in DEFAULT_PERMS["inspector"]}
+    if user["role"] == "owner":
+        return {}
+    return (await get_perms()).get(user["role"], {})
+
+
+async def require(user: dict, key: str) -> None:
+    if user["role"] == "admin":
+        return
+    if not (await perms_for(user)).get(key):
+        raise HTTPException(403, "لا تملك هذه الصلاحية")
+
+
+async def user_payload(u: dict) -> dict:
+    out = public_user(u)
+    out["perms"] = await perms_for(u)
+    if u.get("is_owner"):
+        out["is_owner"] = True
+    bid = _branch_db.get()
+    if bid:
+        b = await hub_db.branches.find_one({"db_name": bid}, {"_id": 0, "id": 1, "name": 1, "activity": 1})
+        out["branch"] = b
+    return out
 
 
 def public_user(u: dict) -> dict:
@@ -214,14 +375,19 @@ def public_user(u: dict) -> dict:
 
 
 async def current_user(request: Request) -> dict:
+    payload = decode_token(request)
+    if payload and payload.get("owner"):
+        owner = await hub_db.owners.find_one({"id": payload.get("sub")}, {"_id": 0})
+        if not owner:
+            raise HTTPException(401, "المستخدم غير موجود")
+        # داخل فرع محدّد يعمل المسؤول العام بصلاحيات مسيّر ذلك الفرع
+        return {**owner, "role": "admin" if _branch_db.get() else "owner", "is_owner": True}
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(401, "غير مصرح")
     token = auth[7:]
-    user_id = None
-    try:
-        user_id = jwt.decode(token, JWT_SECRET, algorithms=["HS256"]).get("sub")
-    except jwt.InvalidTokenError:
+    user_id = (payload or {}).get("sub")
+    if not user_id:
         s = await db.user_sessions.find_one({"session_token": token}, {"_id": 0})
         if s:
             exp = s["expires_at"]
@@ -254,13 +420,34 @@ async def staff_only(user=Depends(current_user)) -> dict:
     return user
 
 
+async def owner_only(request: Request) -> dict:
+    payload = decode_token(request)
+    if not payload or not payload.get("owner"):
+        raise HTTPException(403, "للمسؤول العام فقط")
+    owner = await hub_db.owners.find_one({"id": payload.get("sub")}, {"_id": 0})
+    if not owner:
+        raise HTTPException(401, "المستخدم غير موجود")
+    return {**owner, "role": "owner", "is_owner": True}
+
+
 @api.post("/auth/login")
 async def login(data: LoginIn):
-    user = await db.users.find_one({"email": data.email.strip().lower()}, {"_id": 0})
-    ok = bool(user and user.get("password_hash") and bcrypt.checkpw(data.password.encode(), user["password_hash"].encode()))
-    if not ok:
-        raise HTTPException(401, "البريد الإلكتروني أو كلمة المرور غير صحيحة")
-    return {"token": make_jwt(user["id"]), "user": public_user(user)}
+    email = data.email.strip().lower()
+
+    def good(u):
+        return bool(u and u.get("password_hash") and bcrypt.checkpw(data.password.encode(), u["password_hash"].encode()))
+
+    owner = await hub_db.owners.find_one({"email": email}, {"_id": 0})
+    if good(owner):
+        u = {**owner, "role": "owner", "is_owner": True}
+        return {"token": make_jwt(owner["id"], owner=True), "user": {**public_user(u), "perms": {}, "is_owner": True}}
+    branches = await hub_db.branches.find({"active": {"$ne": False}}, {"_id": 0}).sort("created_at", 1).to_list(200)
+    for b in branches:
+        with use_branch(b["db_name"]):
+            user = await db.users.find_one({"email": email}, {"_id": 0})
+            if good(user):
+                return {"token": make_jwt(user["id"], branch=b["id"]), "user": await user_payload(user)}
+    raise HTTPException(401, "البريد الإلكتروني أو كلمة المرور غير صحيحة")
 
 
 @api.post("/auth/session")
@@ -271,31 +458,51 @@ async def google_session(data: SessionIn):
         raise HTTPException(401, "فشل تسجيل الدخول عبر Google")
     info = r.json()
     email = info["email"].strip().lower()
-    user = await db.users.find_one({"email": email}, {"_id": 0})
-    if not user:
-        emp = await db.employees.find_one({"email": email}, {"_id": 0, "id": 1})
-        user = {"id": new_id(), "email": email, "name": info.get("name") or email, "role": "employee",
-                "employee_id": emp["id"] if emp else None, "picture": info.get("picture"), "created_at": now_utc()}
-        await db.users.insert_one(dict(user))
-    else:
-        await db.users.update_one({"id": user["id"]}, {"$set": {"picture": info.get("picture")}})
-    token = info["session_token"]
-    await db.user_sessions.update_one({"session_token": token}, {"$set": {
-        "session_token": token, "user_id": user["id"], "expires_at": now_utc() + timedelta(days=7), "created_at": now_utc()}}, upsert=True)
-    return {"session_token": token, "user": public_user(user)}
+    with use_branch(MAIN_DB_NAME):
+        user = await db.users.find_one({"email": email}, {"_id": 0})
+        if not user:
+            emp = await db.employees.find_one({"email": email}, {"_id": 0, "id": 1})
+            user = {"id": new_id(), "email": email, "name": info.get("name") or email, "role": "employee",
+                    "employee_id": emp["id"] if emp else None, "picture": info.get("picture"), "created_at": now_utc()}
+            await db.users.insert_one(dict(user))
+        else:
+            await db.users.update_one({"id": user["id"]}, {"$set": {"picture": info.get("picture")}})
+        token = info["session_token"]
+        await db.user_sessions.update_one({"session_token": token}, {"$set": {
+            "session_token": token, "user_id": user["id"], "expires_at": now_utc() + timedelta(days=7), "created_at": now_utc()}}, upsert=True)
+        return {"session_token": token, "user": await user_payload(user)}
 
 
 @api.get("/auth/me")
 async def me(user=Depends(current_user)):
-    return public_user(user)
+    return await user_payload(user)
 
 
 @api.post("/auth/logout")
 async def logout(request: Request):
     token = request.headers.get("Authorization", "")[7:]
-    if token:
+    if token and _branch_db.get():
         await db.user_sessions.delete_one({"session_token": token})
     return {"ok": True}
+
+
+# ---- الصلاحيات ----
+@api.get("/permissions")
+async def get_permissions(_=Depends(admin_only)):
+    return {"perms": await get_perms(), "schema": PERM_SCHEMA}
+
+
+class PermsIn(BaseModel):
+    inspector: dict[str, bool] = {}
+    employee: dict[str, bool] = {}
+
+
+@api.put("/permissions")
+async def put_permissions(data: PermsIn, _=Depends(admin_only)):
+    doc = {role: {k: bool(v) for k, v in vals.items() if k in DEFAULT_PERMS[role]}
+           for role, vals in (("inspector", data.inspector), ("employee", data.employee))}
+    await db.settings.update_one({"id": "permissions"}, {"$set": {"id": "permissions", **doc}}, upsert=True)
+    return {"perms": await get_perms(), "schema": PERM_SCHEMA}
 
 # ------------------------------- Settings ---------------------------------
 
@@ -391,7 +598,7 @@ async def list_employees(include_inactive: bool = True, user=Depends(staff_only)
     pm = await positions_map()
     emps = await db.employees.find(q, {"_id": 0}).sort("full_name", 1).to_list(2000)
     out = [employee_out(e, pm) for e in emps]
-    if user["role"] != "admin":  # المراقب لا يرى الرواتب ولا الهواتف
+    if user["role"] != "admin" and not (await perms_for(user)).get("view_contacts"):  # المراقب لا يرى الرواتب ولا الهواتف
         for o in out:
             o["base_salary"], o["phone"] = 0, ""
     return out
@@ -429,6 +636,7 @@ async def delete_employee(eid: str, _=Depends(admin_only)):
     await db.infractions.delete_many({"employee_id": eid})
     await db.sheet_entries.delete_many({"employee_id": eid})
     await db.violation_entries.delete_many({"employee_id": eid})
+    await db.violation_logs.delete_many({"employee_id": eid})
     await db.users.delete_many({"employee_id": eid, "role": "employee"})
     return {"ok": True}
 
@@ -635,6 +843,24 @@ async def my_report(month: Optional[str] = None, user=Depends(current_user)):
 
 # ------------------------------- Monthly sheet (Excel model) --------------
 MONTH_RE = r"^\d{4}-(0[1-9]|1[0-2])$"
+DATE_RE = r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$"
+
+
+class CommissionTypeIn(BaseModel):
+    id: str = Field(min_length=1, max_length=40)
+    label: str = Field(min_length=1, max_length=60)
+    kind: Literal["rate", "pool"] = "rate"
+    rate: float = Field(default=0, ge=0)
+    share: float = Field(default=0, ge=0, le=1)
+    base_label: str = ""
+    unit: str = ""
+
+
+class ViolationTypeIn(BaseModel):
+    code: str = Field(min_length=1, max_length=40)
+    label: str = Field(min_length=1, max_length=60)
+    impact: Literal["days", "hygiene", "respect", "none"] = "none"
+    active: bool = True
 
 
 class SheetParamsIn(BaseModel):
@@ -645,14 +871,17 @@ class SheetParamsIn(BaseModel):
     w_loss: float = Field(ge=0)
     days_limit: float = Field(ge=0)
     w_days: float = Field(ge=0)
-    rate_commercial: float = Field(ge=0)
-    share_commercial: float = Field(ge=0, le=1)
-    rate_finance: float = Field(ge=0)
-    share_finance: float = Field(ge=0, le=1)
-    price_meter: float = Field(ge=0)
-    share_cutting: float = Field(ge=0, le=1)
     fund_ratio: float = Field(ge=0, le=1)
     pool_rate: float = Field(ge=0, le=1)
+    commission_types: Optional[List[CommissionTypeIn]] = None
+    violation_types: Optional[List[ViolationTypeIn]] = None
+    # حقول النسخة السابقة (تُقبل للتوافق فقط)
+    rate_commercial: Optional[float] = None
+    share_commercial: Optional[float] = None
+    rate_finance: Optional[float] = None
+    share_finance: Optional[float] = None
+    price_meter: Optional[float] = None
+    share_cutting: Optional[float] = None
     violation_map: Optional[dict[str, str]] = None
 
 
@@ -664,37 +893,63 @@ class SheetTurnoverIn(BaseModel):
 class SheetEntryIn(BaseModel):
     month: str = Field(pattern=MONTH_RE)
     employee_id: str
-    hygiene: Optional[float] = Field(default=None, ge=0, le=1)     # نسبة تفتيش 0..1
-    respect: Optional[Literal["نعم", "لا"]] = None
-    losses: Optional[float] = Field(default=None, ge=0)            # دج
-    days: Optional[float] = Field(default=None, ge=0)              # تأخرات + غيابات (أيام)
-    base: Optional[float] = Field(default=None, ge=0)              # رقم أعمال / مبالغ مستردة / أمتار
+    base: Optional[float] = Field(default=None, ge=0)              # رقم أعمال / مبالغ مستردة / أمتار … (يُدخله المسير)
 
 
 class ViolationEntryIn(BaseModel):
-    month: str = Field(pattern=MONTH_RE)
     employee_id: str
+    date: str = Field(pattern=DATE_RE)                              # تاريخ التفتيش/المتابعة — يمكن أكثر من تاريخ في الشهر
     counts: dict[str, int] = {}
+    loss: float = Field(default=0, ge=0)                            # مبلغ الخسارة (دج) في هذا التفتيش — يدخل في مؤشر الخسائر
     note: str = ""
-    follow_date: str = ""
 
 
 async def sheet_params_doc() -> dict:
-    d = await db.settings.find_one({"id": "sheet_params"}, {"_id": 0, "id": 0})
-    return {**sheet.merge_params(d), "violation_map": sheet.merge_violation_map((d or {}).get("violation_map"))}
+    d = await db.settings.find_one({"id": "sheet_params"}, {"_id": 0, "id": 0}) or {}
+    p = sheet.merge_params(d)
+    vtypes = sheet.merge_violation_types(d.get("violation_types"), d.get("violation_map"))
+    p["violation_types"] = vtypes
+    p["violation_map"] = sheet.impact_map(vtypes)
+    return p
 
 
 @api.get("/sheet/params")
-async def get_sheet_params(_=Depends(staff_only)):
-    return {**await sheet_params_doc(), "violation_types": [{"code": c, "label": l} for c, l in sheet.VIOLATION_TYPES]}
+async def get_sheet_params(user=Depends(staff_only)):
+    return await sheet_params_doc()
 
 
 @api.put("/sheet/params")
 async def put_sheet_params(data: SheetParamsIn, _=Depends(admin_only)):
-    doc = data.model_dump()
-    doc["violation_map"] = sheet.merge_violation_map(doc.get("violation_map"))
+    doc = data.model_dump(exclude_none=True)
+    doc.pop("violation_map", None)
+    old = await db.settings.find_one({"id": "sheet_params"}, {"_id": 0}) or {}
+    # لا تُفقد أنواعٌ سابقة مرتبطة ببيانات: الأنواع المحذوفة من القائمة تُحفظ معطَّلة
+    if "violation_types" in doc:
+        new_codes = {t["code"] for t in doc["violation_types"]}
+        prev = sheet.merge_violation_types(old.get("violation_types"), old.get("violation_map"))
+        doc["violation_types"] = doc["violation_types"] + [{**t, "active": False} for t in prev if t["code"] not in new_codes]
+        doc["violation_types"] = sheet.clean_violation_types(doc["violation_types"])
+    if "commission_types" in doc:
+        doc["commission_types"] = sheet.clean_commission_types(doc["commission_types"])
+        keep = {t["id"] for t in doc["commission_types"]}
+        prev_ids = {t["id"] for t in sheet.merge_params(old)["commission_types"]}
+        gone = prev_ids - keep
+        if gone and (await db.employees.count_documents({"perf_type": {"$in": list(gone)}}) or await db.positions.count_documents({"perf_type": {"$in": list(gone)}})):
+            raise HTTPException(400, "لا يمكن حذف نوع عمولة مستعمل في موظفين أو مناصب — غيّر نوعهم أولًا")
     await db.settings.update_one({"id": "sheet_params"}, {"$set": {"id": "sheet_params", **doc}}, upsert=True)
     return await sheet_params_doc()
+
+
+async def month_violations(month: str) -> dict:
+    """مجاميع الشهر لكل موظف من كل التفتيشات: {employee_id: {counts, loss, dates}}"""
+    out: dict = {}
+    for x in await db.violation_logs.find({"month": month}, {"_id": 0}).sort("date", 1).to_list(20000):
+        o = out.setdefault(x["employee_id"], {"counts": {}, "loss": 0.0, "dates": []})
+        for c, n in (x.get("counts") or {}).items():
+            o["counts"][c] = o["counts"].get(c, 0) + int(n)
+        o["loss"] += float(x.get("loss") or 0)
+        o["dates"].append(x["date"])
+    return out
 
 
 async def build_sheet(month: str, only_employee: Optional[str] = None) -> dict:
@@ -703,73 +958,127 @@ async def build_sheet(month: str, only_employee: Optional[str] = None) -> dict:
     turnover = (m or {}).get("turnover")
     emps = await db.employees.find({"$or": [{"status": "active"}, {"id": only_employee}]} if only_employee else {"status": "active"}, {"_id": 0}).sort("created_at", 1).to_list(2000)
     entries = {x["employee_id"]: x for x in await db.sheet_entries.find({"month": month}, {"_id": 0}).to_list(2000)}
-    vio = {x["employee_id"]: x for x in await db.violation_entries.find({"month": month}, {"_id": 0}).to_list(2000)}
+    vio = await month_violations(month)
     rows_in = []
     for e in emps:
         x = entries.get(e["id"], {})
-        counts = vio.get(e["id"], {}).get("counts") or {}
-        auto = sheet.derive_inputs(params["violation_map"], counts)  # الهندام/الاحترام/الأيام تُحسب تلقائيًا من سجل المخالفات
+        v = vio.get(e["id"], {"counts": {}, "loss": 0.0, "dates": []})
+        auto = sheet.derive_inputs(params["violation_map"], v["counts"])  # الهندام/الاحترام/الأيام تُحسب تلقائيًا من سجل المخالفات
         rows_in.append({"id": e["id"], "name": e["full_name"], "perf_type": e.get("perf_type", "pool"),
                         "post_weight": e.get("post_weight"), "hygiene": auto["hygiene"], "respect": auto["respect"],
-                        "losses": x.get("losses"), "days": auto["days"], "base": x.get("base"), "hits": auto["hits"],
-                        "violations": sum(int(v) for v in counts.values())})
+                        "losses": v["loss"], "days": auto["days"], "base": x.get("base"), "hits": auto["hits"],
+                        "violations": sum(int(n) for n in v["counts"].values()), "inspections": len(v["dates"])})
     res = sheet.calc_sheet(params, turnover, rows_in)
     res["month"], res["turnover"] = month, turnover
+    return res
+
+
+def sheet_headline(res: dict) -> dict:
+    qs = [r["q"] for r in res["rows"] if r["q"] is not None]
+    ranked = sorted((r for r in res["rows"] if r["q"] is not None), key=lambda r: r["q"])
+    return {"employees": len(res["rows"]), "turnover": res["turnover"], "pool": res["pool"],
+            "gross": res["totals"]["gross"], "payable": res["totals"]["payable"], "gap": res["totals"]["gap"],
+            "fund": res["totals"]["fund"], "avg_q": (sum(qs) / len(qs)) if qs else None,
+            "best": {"name": ranked[-1]["name"], "q": ranked[-1]["q"]} if ranked else None,
+            "worst": {"name": ranked[0]["name"], "q": ranked[0]["q"]} if ranked else None,
+            "violations": sum(r["violations"] for r in res["rows"]), "losses": sum(r["losses"] or 0 for r in res["rows"])}
+
+
+def mask_sheet(res: dict, perms: dict) -> dict:
+    """يُخفي ما لا يملك المراقب صلاحية رؤيته."""
+    if not perms.get("view_amounts"):
+        for r in res["rows"]:
+            for k in ("s", "t", "u"):
+                r[k] = None
+        res["totals"] = None
+    if not perms.get("view_turnover"):
+        res["turnover"], res["pool"] = None, None
+    if not perms.get("view_base"):
+        for r in res["rows"]:
+            r["base"] = None
     return res
 
 
 @api.get("/sheet")
 async def get_sheet(month: Optional[str] = None, user=Depends(staff_only)):
     res = await build_sheet(month or current_month())
-    if user["role"] != "admin":  # المراقب يرى النتائج والحالة دون المبالغ بالدينار
-        for r in res["rows"]:
-            for k in ("s", "t", "u"):
-                r[k] = None
-        res["totals"], res["pool"], res["turnover"] = None, None, None
+    if user["role"] != "admin":
+        perms = await perms_for(user)
+        if not perms.get("view_sheet"):
+            raise HTTPException(403, "لا تملك هذه الصلاحية")
+        mask_sheet(res, perms)
     return res
 
 
 @api.put("/sheet/turnover")
-async def put_sheet_turnover(data: SheetTurnoverIn, _=Depends(admin_only)):
+async def put_sheet_turnover(data: SheetTurnoverIn, user=Depends(staff_only)):
+    await require(user, "edit_turnover")
     await db.sheet_months.update_one({"month": data.month}, {"$set": {"month": data.month, "turnover": data.turnover}}, upsert=True)
     return {"month": data.month, "turnover": data.turnover}
 
 
 @api.put("/sheet/entry")
 async def put_sheet_entry(data: SheetEntryIn, user=Depends(staff_only)):
+    await require(user, "edit_base")
     emp = await db.employees.find_one({"id": data.employee_id}, {"_id": 0, "perf_type": 1})
     if not emp:
         raise HTTPException(404, "الموظف غير موجود")
-    doc = data.model_dump()
-    if emp.get("perf_type", "pool") == "pool":
-        doc["base"] = None  # العامل لا أساس عمولة له (يبقى عمود الأساس فارغًا كما في Excel)
-    if user["role"] != "admin":  # الأساس (رقم الأعمال/المسترد/الأمتار) من اختصاص المسير
-        old = await db.sheet_entries.find_one({"employee_id": data.employee_id, "month": data.month}, {"_id": 0, "base": 1})
-        doc["base"] = (old or {}).get("base")
-    doc["updated_at"] = now_utc()
-    await db.sheet_entries.update_one({"employee_id": data.employee_id, "month": data.month}, {"$set": doc}, upsert=True)
+    params = await sheet_params_doc()
+    kind = sheet.type_map(params).get(emp.get("perf_type", "pool"), {}).get("kind", "pool")
+    base = data.base if kind == "rate" else None  # العامل المجمَّع لا أساس عمولة له
+    await db.sheet_entries.update_one({"employee_id": data.employee_id, "month": data.month},
+                                      {"$set": {"employee_id": data.employee_id, "month": data.month, "base": base, "updated_at": now_utc()}}, upsert=True)
     return {"ok": True}
 
 
 @api.get("/violations-log")
-async def get_violations_log(month: Optional[str] = None, _=Depends(staff_only)):
+async def get_violations_log(month: Optional[str] = None, date: Optional[str] = None, user=Depends(staff_only)):
+    await require(user, "view_violations")
     month = month or current_month()
+    params = await sheet_params_doc()
+    vtypes = params["violation_types"]
     emps = await db.employees.find({"status": "active"}, {"_id": 0}).sort("created_at", 1).to_list(2000)
-    ents = {x["employee_id"]: x for x in await db.violation_entries.find({"month": month}, {"_id": 0}).to_list(2000)}
-    rows = [{"employee_id": e["id"], "name": e["full_name"], "counts": ents.get(e["id"], {}).get("counts", {}),
-             "note": ents.get(e["id"], {}).get("note", ""), "follow_date": ents.get(e["id"], {}).get("follow_date", "")} for e in emps]
-    res = sheet.violations_summary(rows)
-    res.update(month=month, types=[{"code": c, "label": l} for c, l in sheet.VIOLATION_TYPES], alert_threshold=sheet.ALERT_THRESHOLD)
+    mv = await month_violations(month)
+    day = {x["employee_id"]: x for x in await db.violation_logs.find({"date": date}, {"_id": 0}).to_list(2000)} if date else {}
+    used = {c for v in mv.values() for c, n in v["counts"].items() if n}
+    shown = [t for t in vtypes if t["active"] or t["code"] in used]
+    rows = [{"employee_id": e["id"], "name": e["full_name"], "counts": mv.get(e["id"], {}).get("counts", {}),
+             "loss": mv.get(e["id"], {}).get("loss", 0.0), "dates": mv.get(e["id"], {}).get("dates", []),
+             "day_counts": (day.get(e["id"]) or {}).get("counts", {}), "day_loss": (day.get(e["id"]) or {}).get("loss", 0),
+             "day_note": (day.get(e["id"]) or {}).get("note", "")} for e in emps]
+    res = sheet.violations_summary(rows, shown)
+    # التفتيشات المسجَّلة في هذا الشهر (تاريخ بتاريخ)
+    by_date: dict = {}
+    names = {e["id"]: e["full_name"] for e in emps}
+    for x in await db.violation_logs.find({"month": month}, {"_id": 0}).sort("date", -1).to_list(20000):
+        if x["employee_id"] not in names:
+            continue
+        d = by_date.setdefault(x["date"], {"date": x["date"], "employees": 0, "violations": 0, "loss": 0.0})
+        d["employees"] += 1
+        d["violations"] += sum(int(n) for n in (x.get("counts") or {}).values())
+        d["loss"] += float(x.get("loss") or 0)
+    res.update(month=month, date=date, types=[t for t in vtypes if t["active"]], alert_threshold=sheet.ALERT_THRESHOLD,
+               inspections=list(by_date.values()), loss_total=sum(r["loss"] for r in rows))
     return res
 
 
 @api.put("/violations-log/entry")
-async def put_violation_entry(data: ViolationEntryIn, _=Depends(staff_only)):
+async def put_violation_entry(data: ViolationEntryIn, user=Depends(staff_only)):
+    await require(user, "edit_violations")
     if not await db.employees.find_one({"id": data.employee_id}, {"_id": 1}):
         raise HTTPException(404, "الموظف غير موجود")
-    counts = {c: max(0, int(data.counts.get(c, 0) or 0)) for c in sheet.VIOLATION_CODES if int(data.counts.get(c, 0) or 0) > 0}
-    doc = {"employee_id": data.employee_id, "month": data.month, "counts": counts, "note": data.note, "follow_date": data.follow_date, "updated_at": now_utc()}
-    await db.violation_entries.update_one({"employee_id": data.employee_id, "month": data.month}, {"$set": doc}, upsert=True)
+    params = await sheet_params_doc()
+    codes = {t["code"] for t in params["violation_types"]}
+    counts = {c: int(n) for c, n in data.counts.items() if c in codes and int(n or 0) > 0}
+    loss = data.loss
+    if loss and user["role"] != "admin" and not (await perms_for(user)).get("enter_losses"):
+        raise HTTPException(403, "لا تملك صلاحية تسجيل الخسائر")
+    key = {"employee_id": data.employee_id, "date": data.date}
+    if not counts and not loss and not data.note.strip():
+        await db.violation_logs.delete_one(key)
+        return {"ok": True, "counts": {}, "deleted": True}
+    doc = {**key, "month": data.date[:7], "counts": counts, "loss": loss, "note": data.note, "by": user.get("name"), "updated_at": now_utc()}
+    await db.violation_logs.update_one(key, {"$set": doc, "$setOnInsert": {"id": new_id()}}, upsert=True)
     return {"ok": True, "counts": counts}
 
 
@@ -782,7 +1091,200 @@ async def my_sheet(month: Optional[str] = None, user=Depends(current_user)):
     row = next((r for r in res["rows"] if r["id"] == user["employee_id"]), None)
     if not row:
         raise HTTPException(404, "الموظف غير موجود")
-    return {"month": month, "row": row, "params": res["params"]}
+    perms = await perms_for(user)
+    if user["role"] == "employee":
+        if not perms.get("view_amounts"):
+            for k in ("s", "t", "u"):
+                row[k] = None
+        if not perms.get("view_base"):
+            row["base"] = None
+        if not perms.get("view_violations"):
+            row["hits"] = None
+    params = res["params"]
+    params.pop("violation_types", None)
+    return {"month": month, "row": row, "params": params, "perms": perms}
+
+
+# ------------------------------- Announcements ----------------------------
+class AnnouncementIn(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    body: str = Field(default="", max_length=2000)
+    audience: Literal["all", "employees", "inspectors", "selected"] = "all"
+    employee_ids: List[str] = []
+
+
+def visible_to(a: dict, user: dict) -> bool:
+    if user["role"] == "admin":
+        return True
+    aud = a["audience"]
+    if user["role"] == "inspector":
+        return aud in ("all", "inspectors")
+    return aud in ("all", "employees") or (aud == "selected" and user.get("employee_id") in (a.get("employee_ids") or []))
+
+
+@api.get("/announcements")
+async def list_announcements(user=Depends(current_user)):
+    if user["role"] != "admin" and not (await perms_for(user)).get("view_announcements"):
+        return []
+    items = await db.announcements.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    out = []
+    for a in items:
+        if not visible_to(a, user):
+            continue
+        read_by = a.get("read_by") or []
+        row = {"id": a["id"], "title": a["title"], "body": a.get("body", ""), "audience": a["audience"],
+               "employee_ids": a.get("employee_ids") or [], "created_by": a.get("created_by", ""),
+               "created_at": a["created_at"].isoformat() if hasattr(a["created_at"], "isoformat") else a["created_at"],
+               "read": user["id"] in read_by}
+        if user["role"] == "admin" or a.get("created_by_id") == user["id"]:
+            row["read_count"] = len(read_by)
+        out.append(row)
+    return out
+
+
+@api.post("/announcements")
+async def create_announcement(data: AnnouncementIn, user=Depends(staff_only)):
+    await require(user, "send_announcements")
+    if data.audience == "selected" and not data.employee_ids:
+        raise HTTPException(400, "اختر موظفًا واحدًا على الأقل")
+    doc = {"id": new_id(), "title": data.title.strip(), "body": data.body.strip(), "audience": data.audience,
+           "employee_ids": data.employee_ids if data.audience == "selected" else [], "created_by": user.get("name") or "المسير",
+           "created_by_id": user["id"], "created_at": now_utc(), "read_by": []}
+    await db.announcements.insert_one(dict(doc))
+    return {"id": doc["id"]}
+
+
+@api.delete("/announcements/{aid}")
+async def delete_announcement(aid: str, user=Depends(staff_only)):
+    a = await db.announcements.find_one({"id": aid}, {"_id": 0})
+    if not a:
+        raise HTTPException(404, "الإعلان غير موجود")
+    if user["role"] != "admin" and a.get("created_by_id") != user["id"]:
+        raise HTTPException(403, "صلاحيات غير كافية")
+    await db.announcements.delete_one({"id": aid})
+    return {"ok": True}
+
+
+@api.post("/announcements/{aid}/read")
+async def read_announcement(aid: str, user=Depends(current_user)):
+    await db.announcements.update_one({"id": aid}, {"$addToSet": {"read_by": user["id"]}})
+    return {"ok": True}
+
+
+# ------------------------------- Hub (المسؤول العام) ----------------------
+ACTIVITIES = {
+    "workshop": {"label": "ورشة / إنتاج", "types": None, "positions": [("تجاري", "commercial", None), ("مالية", "finance", None), ("تقطيع", "cutting", None), ("عامل", "pool", 1)]},
+    "commercial": {"label": "تجاري", "types": [
+        {"id": "commercial", "label": "تجاري", "kind": "rate", "rate": 0.004, "share": 0.4, "base_label": "رقم الأعمال المحصَّل", "unit": "دج"},
+        {"id": "pool", "label": "عامل (مجمَّع)", "kind": "pool"}], "positions": [("بائع", "commercial", None), ("أمين مخزن", "pool", 1), ("سائق", "pool", 1)]},
+    "services": {"label": "خدمات", "types": [
+        {"id": "service", "label": "خدمة", "kind": "rate", "rate": 0.01, "share": 0.4, "base_label": "إيرادات الخدمات", "unit": "دج"},
+        {"id": "pool", "label": "عامل (مجمَّع)", "kind": "pool"}], "positions": [("فني / مقدّم خدمة", "service", None), ("مساعد", "pool", 1)]},
+    "other": {"label": "نشاط آخر", "types": [{"id": "pool", "label": "عامل (مجمَّع)", "kind": "pool"}], "positions": [("موظف", "pool", 1)]},
+}
+
+
+class BranchIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    activity: Literal["workshop", "commercial", "services", "other"] = "other"
+    admin_email: str = ""
+    admin_password: str = ""
+    admin_name: str = "مسيّر الفرع"
+    inspector_email: str = ""
+    inspector_password: str = ""
+
+
+class BranchUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    active: Optional[bool] = None
+
+
+async def init_branch_db(activity: str, admin: Optional[tuple] = None, inspector: Optional[tuple] = None) -> None:
+    """يهيّئ فرعًا جديدًا داخل سياقه: فهارس، معاملات حسب النشاط، مناصب، حسابات."""
+    await ensure_indexes()
+    preset = ACTIVITIES.get(activity, ACTIVITIES["other"])
+    await db.settings.update_one({"id": "global"}, {"$setOnInsert": dict(DEFAULT_SETTINGS)}, upsert=True)
+    doc = {"id": "sheet_params"}
+    if preset["types"]:
+        doc["commission_types"] = sheet.clean_commission_types(preset["types"])
+    await db.settings.update_one({"id": "sheet_params"}, {"$setOnInsert": doc}, upsert=True)
+    await db.settings.update_one({"id": "migrations"}, {"$set": {"id": "migrations", "violation_logs": True}}, upsert=True)
+    if not await db.positions.count_documents({}):
+        await db.positions.insert_many([{"id": new_id(), "name": n, "point_value": None, "kpis": [], "perf_type": t, "post_weight": w}
+                                        for n, t, w in preset["positions"]])
+    for (email, pw, name, role) in ([admin + ("admin",)] if admin else []) + ([inspector + ("inspector",)] if inspector else []):
+        if email and pw and not await db.users.find_one({"email": email.strip().lower()}):
+            await db.users.insert_one({"id": new_id(), "email": email.strip().lower(), "name": name, "role": role,
+                                       "password_hash": hash_pw(pw), "created_at": now_utc()})
+
+
+@hub.get("/branches")
+async def hub_branches(_=Depends(owner_only)):
+    return await hub_db.branches.find({}, {"_id": 0, "db_name": 0}).sort("created_at", 1).to_list(200)
+
+
+@hub.get("/activities")
+async def hub_activities(_=Depends(owner_only)):
+    return [{"key": k, "label": v["label"]} for k, v in ACTIVITIES.items()]
+
+
+@hub.post("/branches")
+async def hub_create_branch(data: BranchIn, _=Depends(owner_only)):
+    if data.admin_email and len(data.admin_password) < 6:
+        raise HTTPException(400, "كلمة مرور المسيّر قصيرة (6 أحرف على الأقل)")
+    if data.inspector_email and len(data.inspector_password) < 6:
+        raise HTTPException(400, "كلمة مرور المراقب قصيرة (6 أحرف على الأقل)")
+    for em in (data.admin_email, data.inspector_email):  # البريد يُستعمل لتحديد الفرع عند الدخول: يجب ألا يتكرر
+        if em and (await hub_db.owners.find_one({"email": em.strip().lower()}) or await email_in_any_branch(em.strip().lower())):
+            raise HTTPException(400, f"البريد {em} مستخدم في فرع آخر")
+    bid = new_id()[:10]
+    b = {"id": bid, "name": data.name.strip(), "activity": data.activity, "db_name": f"{MAIN_DB_NAME}_b_{bid}", "active": True, "created_at": now_utc()}
+    await hub_db.branches.insert_one(dict(b))
+    with use_branch(b["db_name"]):
+        await init_branch_db(data.activity, (data.admin_email, data.admin_password, data.admin_name) if data.admin_email else None,
+                             (data.inspector_email, data.inspector_password, "المراقب") if data.inspector_email else None)
+    b.pop("db_name"); b.pop("_id", None)
+    return b
+
+
+@hub.put("/branches/{bid}")
+async def hub_update_branch(bid: str, data: BranchUpdate, _=Depends(owner_only)):
+    upd = {k: v for k, v in data.model_dump().items() if v is not None}
+    if bid == "main" and upd.get("active") is False:
+        raise HTTPException(400, "لا يمكن تعطيل الفرع الرئيسي")
+    res = await hub_db.branches.update_one({"id": bid}, {"$set": upd})
+    if not res.matched_count:
+        raise HTTPException(404, "الفرع غير موجود")
+    forget_branch(bid)
+    return {"ok": True}
+
+
+async def email_in_any_branch(email: str) -> bool:
+    for b in await hub_db.branches.find({}, {"_id": 0}).to_list(200):
+        with use_branch(b["db_name"]):
+            if await db.users.find_one({"email": email}, {"_id": 1}):
+                return True
+    return False
+
+
+@hub.get("/overview")
+async def hub_overview(month: Optional[str] = None, _=Depends(owner_only)):
+    month = month or current_month()
+    out = []
+    for b in await hub_db.branches.find({"active": {"$ne": False}}, {"_id": 0}).sort("created_at", 1).to_list(200):
+        with use_branch(b["db_name"]):
+            res = await build_sheet(month)
+            vio_days = await db.violation_logs.distinct("date", {"month": month})
+            out.append({"id": b["id"], "name": b["name"], "activity": b["activity"], "inspections": len(vio_days), **sheet_headline(res)})
+    tot = {k: sum((b.get(k) or 0) for b in out) for k in ("employees", "turnover", "payable", "gap", "violations", "losses")}
+    qs = [b["avg_q"] for b in out if b["avg_q"] is not None]
+    tot["avg_q"] = sum(qs) / len(qs) if qs else None
+    return {"month": month, "branches": out, "totals": tot}
+
+
+@hub.get("/owners")
+async def hub_owners(_=Depends(owner_only)):
+    return await hub_db.owners.find({}, {"_id": 0, "password_hash": 0}).to_list(50)
 
 # ------------------------------- Seed -------------------------------------
 
@@ -804,19 +1306,19 @@ async def seed():
     if await db.positions.count_documents({}):
         return
     positions = [
-        {"id": new_id(), "name": "تجاري", "point_value": None, "kpis": [
+        {"id": new_id(), "name": "تجاري", "perf_type": "commercial", "post_weight": None, "point_value": None, "kpis": [
             {"id": new_id(), "name": "رقم المبيعات اليومي", "weight": 50, "target": 40000, "unit": "دج"},
             {"id": new_id(), "name": "عدد الزبائن المخدومين", "weight": 30, "target": 25, "unit": "زبون"},
             {"id": new_id(), "name": "الانضباط والحضور", "weight": 20, "target": 1, "unit": "يوم"}]},
-        {"id": new_id(), "name": "مالية", "point_value": None, "kpis": [
+        {"id": new_id(), "name": "مالية", "perf_type": "finance", "post_weight": None, "point_value": None, "kpis": [
             {"id": new_id(), "name": "دقة الصندوق", "weight": 40, "target": 100, "unit": "%"},
             {"id": new_id(), "name": "عدد العمليات", "weight": 35, "target": 120, "unit": "عملية"},
             {"id": new_id(), "name": "الانضباط والحضور", "weight": 25, "target": 1, "unit": "يوم"}]},
-        {"id": new_id(), "name": "تقطيع", "point_value": None, "kpis": [
+        {"id": new_id(), "name": "تقطيع", "perf_type": "cutting", "post_weight": None, "point_value": None, "kpis": [
             {"id": new_id(), "name": "عدد القطع المنجزة", "weight": 50, "target": 200, "unit": "قطعة"},
             {"id": new_id(), "name": "جودة القص (بدون عيوب)", "weight": 30, "target": 100, "unit": "%"},
             {"id": new_id(), "name": "الانضباط والحضور", "weight": 20, "target": 1, "unit": "يوم"}]},
-        {"id": new_id(), "name": "عامل", "point_value": None, "kpis": [
+        {"id": new_id(), "name": "عامل", "perf_type": "pool", "post_weight": 1, "point_value": None, "kpis": [
             {"id": new_id(), "name": "الانضباط والحضور", "weight": 100, "target": 1, "unit": "يوم"}]},
     ]
     await db.positions.insert_many([dict(p) for p in positions])
@@ -853,11 +1355,11 @@ async def seed():
                                        "position_id": positions[pi]["id"], "hire_date": "2023-03-01",
                                        "base_salary_enc": enc(sal), "status": "active", "perf_type": ptype,
                                        "post_weight": pweight, "created_at": now_utc()})
-        await db.sheet_entries.insert_one({"employee_id": eid, "month": month, "hygiene": sm[0], "respect": sm[1],
-                                           "losses": sm[2], "days": sm[3], "base": sm[4], "updated_at": now_utc()})
-        if sm[3] >= 1:
-            await db.violation_entries.insert_one({"employee_id": eid, "month": month, "counts": {"late": int(sm[3])},
-                                                   "note": "", "follow_date": "", "updated_at": now_utc()})
+        await db.sheet_entries.insert_one({"employee_id": eid, "month": month, "base": sm[4], "updated_at": now_utc()})
+        if sm[3] >= 1 or sm[2] > 0:
+            await db.violation_logs.insert_one({"id": new_id(), "employee_id": eid, "date": f"{month}-01", "month": month,
+                                                "counts": {"late": int(sm[3])} if sm[3] >= 1 else {}, "loss": float(sm[2]),
+                                                "note": "", "updated_at": now_utc()})
         if email:
             await sync_employee_user(eid, name, email, os.environ.get("EMPLOYEE_DEMO_PASSWORD", "Employee@123"))
         for back in range(min(today.day - 1, 10), -1, -1):
@@ -873,14 +1375,61 @@ async def seed():
 
 
 app.include_router(api)
+app.include_router(hub)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 
+async def migrate_branch() -> None:
+    """ترحيل بيانات النسخة السابقة داخل فرع (مرة واحدة): سجل المخالفات الشهري → تفتيشات بتواريخ، والخسائر اليدوية → سجلات خسائر."""
+    flags = await db.settings.find_one({"id": "migrations"}, {"_id": 0}) or {}
+    if not flags.get("violation_logs"):
+        for v in await db.violation_entries.find({}, {"_id": 0}).to_list(20000):
+            fd = v.get("follow_date") or ""
+            d = fd if fd.startswith(v["month"]) and len(fd) == 10 else f"{v['month']}-01"
+            await db.violation_logs.update_one({"employee_id": v["employee_id"], "date": d}, {
+                "$set": {"month": d[:7], "counts": v.get("counts") or {}, "note": v.get("note", ""), "updated_at": now_utc()},
+                "$setOnInsert": {"id": new_id(), "loss": 0.0}}, upsert=True)
+        for e in await db.sheet_entries.find({"losses": {"$gt": 0}}, {"_id": 0}).to_list(20000):
+            d = f"{e['month']}-01"
+            await db.violation_logs.update_one({"employee_id": e["employee_id"], "date": d}, {
+                "$inc": {"loss": float(e["losses"])},
+                "$setOnInsert": {"id": new_id(), "month": e["month"], "counts": {}, "note": "رصيد خسائر سابق"}}, upsert=True)
+        await db.sheet_entries.update_many({}, {"$unset": {"losses": "", "hygiene": "", "respect": "", "days": ""}})
+        await db.settings.update_one({"id": "migrations"}, {"$set": {"id": "migrations", "violation_logs": True}}, upsert=True)
+    # مناصب قديمة بلا نوع عمولة: يُستنتج من موظفيها
+    for p in await db.positions.find({"perf_type": {"$exists": False}}, {"_id": 0}).to_list(500):
+        emps = await db.employees.find({"position_id": p["id"]}, {"_id": 0, "perf_type": 1, "post_weight": 1}).to_list(500)
+        types = [e.get("perf_type", "pool") for e in emps]
+        pt = max(set(types), key=types.count) if types else "pool"
+        ws = [e.get("post_weight") for e in emps if e.get("post_weight") is not None]
+        await db.positions.update_one({"id": p["id"]}, {"$set": {"perf_type": pt, "post_weight": ws[0] if ws else None}})
+
+
+async def bootstrap_hub() -> None:
+    await hub_db.branches.create_index("id", unique=True)
+    await hub_db.owners.create_index("email", unique=True)
+    if not await hub_db.branches.find_one({"id": "main"}):
+        await hub_db.branches.insert_one({"id": "main", "name": os.environ.get("MAIN_BRANCH_NAME", "الورشة"), "activity": "workshop",
+                                          "db_name": MAIN_DB_NAME, "active": True, "created_at": now_utc()})
+    email = os.environ.get("OWNER_EMAIL", "owner@company.dz").strip().lower()
+    pw = os.environ.get("OWNER_PASSWORD", "Owner@123456")
+    owner = await hub_db.owners.find_one({"email": email})
+    if not owner:
+        await hub_db.owners.insert_one({"id": new_id(), "email": email, "name": "المسؤول العام", "password_hash": hash_pw(pw), "created_at": now_utc()})
+    elif os.environ.get("OWNER_PASSWORD") and not bcrypt.checkpw(pw.encode(), owner["password_hash"].encode()):
+        await hub_db.owners.update_one({"email": email}, {"$set": {"password_hash": hash_pw(pw)}})
+
+
 @app.on_event("startup")
 async def startup():
-    await ensure_indexes()
-    await seed()
+    await bootstrap_hub()
+    for b in await hub_db.branches.find({}, {"_id": 0}).to_list(200):
+        with use_branch(b["db_name"]):
+            await ensure_indexes()
+            await migrate_branch()
+    with use_branch(MAIN_DB_NAME):
+        await seed()
 
 
 @app.on_event("shutdown")

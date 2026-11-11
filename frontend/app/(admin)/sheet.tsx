@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RefreshControl, ScrollView, View } from "react-native";
+import { Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { mutate } from "@/src/api";
@@ -9,7 +9,8 @@ import { currentMonth, money, num } from "@/src/format";
 import { useApi } from "@/src/hooks";
 import { usesNativeTabs } from "@/src/navigation";
 import { useTheme } from "@/src/theme";
-import { PERF_BASE_LABEL, PERF_TYPE_LABEL, Sheet, SheetRow } from "@/src/types";
+import { MASK, usePrivacy } from "@/src/privacy";
+import { Sheet, SheetRow, typeBaseLabel, typeLabel, typeOf } from "@/src/types";
 import { Card, EmptyState, ErrorView, Header, LineItem, Loading, MonthSwitcher, Pill, R, Row, S, SyncBadge, T, useToast } from "@/src/ui";
 
 const pct = (v: number | null, d = 1) => (v === null || v === undefined ? "—" : `${num(v * 100, d)}%`);
@@ -18,6 +19,12 @@ const dz = (v: number | null) => (v === null || v === undefined ? "—" : money(
 export default function SheetScreen() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const perms = user?.perms ?? {};
+  const canEditTurnover = isAdmin || !!perms.edit_turnover;
+  const canEditBase = isAdmin || !!perms.edit_base;
+  const hide = usePrivacy();
+  const [reveal, setReveal] = useState(false);
+  const masked = hide && !reveal;
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const toast = useToast();
@@ -34,8 +41,7 @@ export default function SheetScreen() {
       toast(e?.message || "تعذر الحفظ", "error");
     }
   };
-  const saveEntry = (row: SheetRow, patch: Partial<Pick<SheetRow, "losses" | "base">>) =>
-    save("/sheet/entry", { month, employee_id: row.id, losses: row.losses, base: row.base, ...patch });
+  const saveBase = (row: SheetRow, base: number | null) => save("/sheet/entry", { month, employee_id: row.id, base });
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
@@ -48,32 +54,42 @@ export default function SheetScreen() {
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: S.lg, gap: S.md, paddingBottom: (usesNativeTabs ? insets.bottom : 0) + S.xl }}
           refreshControl={<RefreshControl refreshing={q.refreshing} onRefresh={q.refresh} tintColor={colors.brandPrimary} />}>
           <MonthSwitcher month={month} onChange={setMonth} />
-          {isAdmin ? (
+          {sh.turnover !== null || canEditTurnover ? (
             <Card style={{ gap: S.sm }}>
-              <CellInput testID="sheet-turnover-input" label="رقم أعمال الشركة المحصَّل الصافي" unit="دج" value={sh.turnover} highlight
-                onCommit={(v) => save("/sheet/turnover", { month, turnover: v })} />
+              {masked ? (
+                <Pressable testID="sheet-turnover-masked" onPress={() => setReveal(true)} style={{ minHeight: 56, justifyContent: "center", gap: S.xs }}>
+                  <T variant="caption">رقم أعمال الشركة المحصَّل الصافي (مخفي — وضع الخصوصية)</T>
+                  <T variant="h2">{MASK}</T>
+                  <T variant="caption" color="brand">اضغط لإظهاره مؤقتًا</T>
+                </Pressable>
+              ) : (
+                <CellInput testID="sheet-turnover-input" label="رقم أعمال الشركة المحصَّل الصافي" unit="دج" value={sh.turnover} highlight editable={canEditTurnover}
+                  onCommit={(v) => save("/sheet/turnover", { month, turnover: v })} />
+              )}
               <Row style={{ justifyContent: "space-between", gap: S.md }}>
                 <T variant="caption">المجمَّع للتوزيع ({pct(sh.params.pool_rate, 2)} من رقم الأعمال)</T>
-                <T testID="sheet-pool" variant="label">{dz(sh.pool)}</T>
+                <T testID="sheet-pool" variant="label">{masked ? MASK : dz(sh.pool)}</T>
               </Row>
               <Row style={{ justifyContent: "space-between", gap: S.md }}>
                 <T variant="caption">مجموع أوزان العمال</T>
                 <T variant="label">{num(sh.pool_weights, 2)}</T>
               </Row>
+              {hide && reveal ? <Pressable onPress={() => setReveal(false)}><T variant="caption" color="brand">إخفاء من جديد</T></Pressable> : null}
             </Card>
           ) : null}
-          <T variant="caption">الأخضر الفاتح = تكتبه أنت (رقم الأعمال، الأساس، الخسائر) · الرمادي = يُحسب وحده. الهندام والاحترام والتأخرات تُحسب تلقائيًا من «سجل المخالفات». تُحفظ القيمة عند مغادرة الحقل.</T>
+          <T variant="caption">الأخضر الفاتح = تكتبه أنت (رقم الأعمال، الأساس) · الرمادي = يُحسب وحده. الهندام والاحترام والتأخرات والخسائر تُحسب تلقائيًا من «سجل المخالفات» (كل التفتيشات في الشهر). تُحفظ القيمة عند مغادرة الحقل.</T>
 
           {sh.rows.length === 0 ? <EmptyState icon="people-outline" title="لا يوجد موظفون نشطون" subtitle="أضف موظفين من الإعدادات" /> : null}
           {sh.rows.map((r, i) => {
             const ok = r.status === "✔";
-            const isBase = r.perf_type !== "pool";
+            const ct = typeOf(sh.params.commission_types, r.perf_type);
+            const isBase = ct?.kind === "rate";
             return (
               <Card key={r.id} style={{ gap: S.sm }} testID={`sheet-row-${i}`}>
                 <Row style={{ justifyContent: "space-between", gap: S.sm }}>
                   <View style={{ flex: 1 }}>
                     <T variant="h3" numberOfLines={1}>{r.name}</T>
-                    <T variant="caption">{PERF_TYPE_LABEL[r.perf_type]}{r.violations ? ` · ${r.violations} مخالفة` : ""}</T>
+                    <T variant="caption">{typeLabel(sh.params.commission_types, r.perf_type)}{r.violations ? ` · ${r.violations} مخالفة` : ""}{r.inspections ? ` · ${r.inspections} تفتيش` : ""}</T>
                   </View>
                   <Pill testID={`sheet-status-${i}`} label={r.status || "—"} tone={ok ? "success" : "warning"} />
                 </Row>
@@ -82,11 +98,15 @@ export default function SheetScreen() {
                   <CalcCell label="الهندام والنظافة (من السجل)" value={(r.hits?.hygiene ?? 0) > 0 ? `راسب · ${r.hits?.hygiene} مخالفة` : "ناجح ✔"} />
                   <CalcCell label="الاحترام (من السجل)" value={(r.hits?.respect ?? 0) > 0 ? `لا · ${r.hits?.respect} مخالفة` : "نعم ✔"} />
                   <CalcCell label="التأخرات والغيابات (من السجل)" value={`${num(r.days ?? 0)} يوم`} />
-                  <CellInput testID={`sheet-losses-${i}`} label="الخسائر" unit="دج" value={r.losses} onCommit={(v) => saveEntry(r, { losses: v })} />
+                  <CalcCell label="الخسائر (من السجل)" value={money(r.losses ?? 0)} />
                 </Row>
 
                 {isBase ? (
-                  <CellInput testID={`sheet-base-${i}`} label={PERF_BASE_LABEL[r.perf_type]} value={r.base} highlight editable={isAdmin} onCommit={(v) => saveEntry(r, { base: v })} />
+                  perms.view_base === false && !isAdmin ? null : masked ? (
+                    <CalcCell label={typeBaseLabel(ct)} value={MASK} />
+                  ) : (
+                    <CellInput testID={`sheet-base-${i}`} label={typeBaseLabel(ct)} value={r.base} highlight editable={canEditBase} onCommit={(v) => saveBase(r, v)} />
+                  )
                 ) : (
                   <Row style={{ justifyContent: "space-between" }}>
                     <T variant="caption">وزن المنصب (للعمال فقط)</T>
@@ -104,7 +124,7 @@ export default function SheetScreen() {
                   <CalcCell label="نتيجة الأداء" value={pct(r.q)} strong />
                   <CalcCell label="مضاعف الأداء" value={pct(r.r)} strong />
                 </Row>
-                {isAdmin ? (
+                {r.t !== null || r.s !== null ? (
                   <Row style={{ flexWrap: "wrap", gap: S.sm }}>
                     <CalcCell label="المنحة القصوى / العمولة الخام" value={dz(r.s)} />
                     <CalcCell label="المنحة المستحقة" value={dz(r.t)} strong />
@@ -115,7 +135,7 @@ export default function SheetScreen() {
             );
           })}
 
-          {isAdmin && sh.totals ? (
+          {sh.totals ? (
             <Card style={{ gap: 0 }} testID="sheet-totals">
               <T variant="h2" style={{ paddingBottom: S.sm }}>المجموع</T>
               <LineItem label="المنحة القصوى / العمولة الخام" value={money(sh.totals.gross)} />
