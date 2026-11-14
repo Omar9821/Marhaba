@@ -8,13 +8,14 @@ import { useApi } from "@/src/hooks";
 import { usesNativeTabs } from "@/src/navigation";
 import { useTheme } from "@/src/theme";
 import { ChatItem, Contact, RequestStatus, RequestSummary } from "@/src/types";
+import { PushCard } from "@/src/components/push-card";
 import { Btn, Card, Chip, EmptyState, ErrorView, Header, Icon, Loading, Pill, Row, S, Segmented, SyncBadge, T } from "@/src/ui";
 
 export const STATUS_TONE: Record<RequestStatus, "brand" | "success" | "warning" | "error" | "muted"> = {
   new: "warning", answered: "brand", approved: "success", rejected: "error", issued: "success", closed: "muted", withdrawn: "muted",
 };
 export const KIND_ICON: Record<string, any> = {
-  complaint: "alert-circle-outline", leave_exit: "exit-outline", absence_excuse: "document-text-outline", materials: "cube-outline",
+  complaint: "alert-circle-outline", leave_exit: "exit-outline", absence_excuse: "document-text-outline",
   question: "help-circle-outline", written_inquiry: "mail-unread-outline",
 };
 type Filter = "all" | "open" | "done";
@@ -40,6 +41,7 @@ export function InboxView({ staff }: { staff: boolean }) {
       <Header title="الطلبات والمراسلة" subtitle={staff ? "طلبات العمال والاستفسارات الكتابية والرسائل" : "قدّم طلبك وتواصل مع مسؤول الورشة أو المسيّر"} right={<SyncBadge />} />
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: S.lg, gap: S.md, paddingBottom: (usesNativeTabs ? insets.bottom : 0) + S.xl }}
         refreshControl={<RefreshControl refreshing={reqs.refreshing} onRefresh={() => { reqs.refresh(); chats.refresh(); }} tintColor={colors.brandPrimary} />}>
+        <PushCard />
         <Segmented testID="inbox-seg" value={seg} onChange={setSeg}
           options={[{ key: "requests", label: `الطلبات${unreadReq ? ` (${unreadReq})` : ""}` }, { key: "chat", label: `المراسلة${unreadChat ? ` (${unreadChat})` : ""}` }]} />
 
@@ -56,7 +58,7 @@ export function InboxView({ staff }: { staff: boolean }) {
             </Row>
             {reqs.loading ? <Loading /> : reqs.error && !reqs.data ? <ErrorView message={reqs.error} onRetry={reqs.refresh} /> : null}
             {reqs.data && list.length === 0 ? (
-              <EmptyState icon="file-tray-outline" title="لا توجد طلبات" subtitle={staff ? "ستظهر هنا طلبات العمال الموجّهة إليك" : "شكوى، إذن خروج، تبرير غياب، طلب مواد أو سؤال: ابدأ من الزر أعلاه"} />
+              <EmptyState icon="file-tray-outline" title="لا توجد طلبات" subtitle={staff ? "ستظهر هنا طلبات العمال الموجّهة إليك" : "شكوى، إذن خروج، تبرير غياب أو سؤال: ابدأ من الزر أعلاه"} />
             ) : null}
             {list.map((r) => (
               <Pressable key={r.id} testID={`request-${r.id}`} onPress={() => router.push(`/request/${r.id}` as any)}>

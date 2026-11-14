@@ -13,12 +13,10 @@ import { Btn, Card, Chip, Field, Header, Icon, Row, S, SwitchRow, T, useToast } 
 const KINDS: { kind: RequestKind; label: string; icon: any; to: ("supervisor" | "manager")[]; hint: string }[] = [
   { kind: "leave_exit", label: "إذن بالخروج", icon: "exit-outline", to: ["supervisor", "manager"], hint: "لخروج مؤقت أثناء الدوام" },
   { kind: "absence_excuse", label: "تبرير غياب", icon: "document-text-outline", to: ["supervisor", "manager"], hint: "لتبرير غياب أو تأخر مع الوثيقة" },
-  { kind: "materials", label: "طلب مواد من المخزن", icon: "cube-outline", to: ["supervisor", "manager"], hint: "مواد أولية أو إكسسوارات أو قطع غيار" },
   { kind: "complaint", label: "شكوى", icon: "alert-circle-outline", to: ["manager"], hint: "سرّية: تصل المسيّر وحده" },
   { kind: "question", label: "سؤال / استفسار", icon: "help-circle-outline", to: ["supervisor", "manager"], hint: "أي سؤال أو اقتراح" },
 ];
 const TO_LABEL = { supervisor: "مسؤول الورشة", manager: "المسيّر" };
-type Item = { name: string; ref: string; unit: string; qty: string };
 
 export default function NewRequest() {
   const { mode } = useLocalSearchParams<{ mode?: string }>();
@@ -37,21 +35,16 @@ export default function NewRequest() {
   const [until, setUntil] = useState("");
   const [toDate, setToDate] = useState("");
   const [hasDoc, setHasDoc] = useState(false);
-  const [category, setCategory] = useState("");
-  const [machine, setMachine] = useState("");
-  const [items, setItems] = useState<Item[]>([{ name: "", ref: "", unit: "", qty: "1" }]);
   const [empId, setEmpId] = useState<string | null>(null);
   const [hours, setHours] = useState("48");
   const [busy, setBusy] = useState(false);
   const emps = useApi<Employee[]>(inquiry ? "/employees?include_inactive=false" : null);
   const effTo = spec && !spec.to.includes(to) ? spec.to[0] : to;
 
-  const setItem = (i: number, k: keyof Item, v: string) => setItems((a) => a.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
   const submit = async () => {
     const fields: any =
       kind === "leave_exit" ? { date, from_time: from, to_time: until }
       : kind === "absence_excuse" ? { from_date: date, to_date: toDate || date, has_document: hasDoc }
-      : kind === "materials" ? { category, machine, items: items.filter((i) => i.name.trim()).map((i) => ({ ...i, qty: Number(i.qty.replace(",", ".")) || 0 })) }
       : {};
     setBusy(true);
     try {
@@ -126,27 +119,8 @@ export default function NewRequest() {
                   <SwitchRow testID="req-doc" label="لديّ وثيقة تثبت العذر" hint="تُقدَّم للمسؤول في أجل أقصاه المحدّد قانونًا" value={hasDoc} onChange={setHasDoc} />
                 </>
               ) : null}
-              {kind === "materials" ? (
-                <>
-                  <Field testID="req-category" label="نوع المواد" value={category} onChangeText={setCategory} placeholder="مواد أولية / إكسسوارات / قطع غيار" />
-                  <Field testID="req-machine" label="الآلة أو الورشة المعنية" value={machine} onChangeText={setMachine} placeholder="مثال: آلة الفور" />
-                  <T variant="label">المواد المطلوبة</T>
-                  {items.map((it, i) => (
-                    <Card key={i} style={{ gap: S.sm, backgroundColor: colors.surfaceSecondary }}>
-                      <Field testID={`item-name-${i}`} label={`المادة ${i + 1}`} value={it.name} onChangeText={(v) => setItem(i, "name", v)} />
-                      <Row style={{ gap: S.sm }}>
-                        <View style={{ flex: 1 }}><Field testID={`item-qty-${i}`} label="الكمية" value={it.qty} onChangeText={(v) => setItem(i, "qty", v)} keyboardType="decimal-pad" /></View>
-                        <View style={{ flex: 1 }}><Field testID={`item-unit-${i}`} label="الوحدة" value={it.unit} onChangeText={(v) => setItem(i, "unit", v)} placeholder="قطعة / متر / لتر" /></View>
-                        <View style={{ flex: 1 }}><Field label="المرجع" value={it.ref} onChangeText={(v) => setItem(i, "ref", v)} placeholder="اختياري" /></View>
-                      </Row>
-                      {items.length > 1 ? <Btn small variant="outline" title="حذف المادة" onPress={() => setItems((a) => a.filter((_, j) => j !== i))} /> : null}
-                    </Card>
-                  ))}
-                  {items.length < 15 ? <Btn testID="item-add" variant="outline" icon="add" title="إضافة مادة" onPress={() => setItems((a) => [...a, { name: "", ref: "", unit: "", qty: "1" }])} /> : null}
-                </>
-              ) : null}
               {kind === "complaint" || kind === "question" ? <Field testID="req-subject" label="الموضوع" value={subject} onChangeText={setSubject} /> : null}
-              <Field testID="req-body" label={kind === "leave_exit" || kind === "absence_excuse" ? "السبب" : kind === "materials" ? "ملاحظات" : "التفاصيل"} value={body} onChangeText={setBody} multiline style={{ minHeight: 110, textAlignVertical: "top", paddingTop: S.sm }} />
+              <Field testID="req-body" label={kind === "leave_exit" || kind === "absence_excuse" ? "السبب" : "التفاصيل"} value={body} onChangeText={setBody} multiline style={{ minHeight: 110, textAlignVertical: "top", paddingTop: S.sm }} />
             </>
           )}
         </Card>

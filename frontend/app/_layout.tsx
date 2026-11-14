@@ -9,6 +9,7 @@ import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { flushOutbox } from "@/src/api";
+import { syncPush } from "@/src/push";
 import { AuthProvider, useAuth } from "@/src/auth";
 import { ErrorBoundary } from "@/src/components/error-boundary";
 import { queryClient } from "@/src/query-client";
@@ -51,6 +52,7 @@ function Gate() {
   useEffect(() => {
     if (!user) return;
     flushOutbox();
+    syncPush();
     const t = setInterval(flushOutbox, 20000);
     return () => clearInterval(t);
   }, [user]);

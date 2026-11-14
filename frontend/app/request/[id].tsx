@@ -19,14 +19,10 @@ function FieldsView({ r }: { r: RequestDetail }) {
   const rows: [string, string][] = [];
   if (r.kind === "leave_exit") rows.push(["التاريخ", f.date], ["من", f.from_time], ["إلى", f.to_time || "—"]);
   if (r.kind === "absence_excuse") rows.push(["من تاريخ", f.from_date], ["إلى تاريخ", f.to_date], ["وثيقة مثبتة", f.has_document ? "نعم" : "لا"]);
-  if (r.kind === "materials") rows.push(["نوع المواد", f.category || "—"], ["الآلة / الورشة", f.machine || "—"]);
   if (r.kind === "written_inquiry" && r.due_at) rows.push(["آخر أجل للرد", when(r.due_at)]);
   return (
     <>
       {rows.map(([k, v]) => <Row key={k} style={{ justifyContent: "space-between" }}><T variant="caption">{k}</T><T variant="label">{v}</T></Row>)}
-      {r.kind === "materials" ? (f.items || []).map((it: any, i: number) => (
-        <Row key={i} style={{ justifyContent: "space-between", gap: S.sm }}><T style={{ flex: 1 }}>{i + 1}. {it.name}{it.ref ? ` (${it.ref})` : ""}</T><T variant="label">{it.qty} {it.unit}</T></Row>
-      )) : null}
     </>
   );
 }
@@ -98,7 +94,6 @@ export default function RequestScreen() {
                     <View style={{ flex: 1 }}><Btn testID="decide-reject" variant="danger" title="رفض" icon="close-circle-outline" loading={busy} onPress={() => decide("rejected", "تم الرفض")} /></View>
                   </Row>
                 ) : null}
-                {r.can_decide && r.kind === "materials" && r.status === "approved" ? <Btn testID="decide-issue" title="تأكيد صرف المواد من المخزن" icon="cube-outline" loading={busy} onPress={() => decide("issued", "سُجّل الصرف")} /> : null}
                 {r.can_close ? <Btn testID="decide-close" variant="outline" title="إغلاق الطلب" loading={busy} onPress={() => decide("closed", "أُغلق الطلب")} /> : null}
               </Card>
             ) : null}

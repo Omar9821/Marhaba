@@ -17,6 +17,10 @@ export default function Root({ children }: PropsWithChildren) {
           If you want to enable scrolling, remove `ScrollViewStyleReset` and
           set `overflow: auto` on the body style below.
         */}
+        <link rel="manifest" href="/manifest.json" />
+        <link rel="apple-touch-icon" href="/icon-192.png" />
+        <meta name="theme-color" content="#2f5d4b" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
         <ScrollViewStyleReset />
         <style
           dangerouslySetInnerHTML={{
