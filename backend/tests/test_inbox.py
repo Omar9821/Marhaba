@@ -9,7 +9,7 @@ pytest.importorskip("mongomock_motor")
 from cryptography.fernet import Fernet  # noqa: E402
 
 os.environ.update(MONGO_URL="mongodb://x", DB_NAME="t2", JWT_SECRET="s", ENCRYPTION_KEY=Fernet.generate_key().decode(),
-                  ADMIN_EMAIL="admin@company.dz", ADMIN_PASSWORD="Admin@123", OWNER_EMAIL="owner@company.dz", OWNER_PASSWORD="Owner@123456")
+                  ADMIN_EMAIL="admin@company.dz", ADMIN_PASSWORD="Admin@123", INSPECTOR_EMAIL="inspector@company.dz", OWNER_EMAIL="owner@company.dz", OWNER_PASSWORD="Owner@123456")
 import motor.motor_asyncio as m  # noqa: E402
 import mongomock_motor  # noqa: E402
 
@@ -167,3 +167,47 @@ def test_push_notifications(c, H, monkeypatch):
     c.post("/api/chat/send", json={"to_user_id": me["id"], "text": "مرة أخرى"}, headers=H["insp"])
     time.sleep(0.4)
     assert sent == []
+
+
+def test_team_supervisor_scope(c, H):
+    pos = {p["name"]: p["id"] for p in c.get("/api/positions", headers=H["adm"]).json()}
+    names = list(pos)
+    assert len(names) >= 2
+    pa, pb = pos[names[0]], pos[names[1]]
+    mk = lambda body: c.post("/api/employees", json=body, headers=H["adm"])
+    # منح صلاحية المراقب بلا بريد مرفوض
+    assert mk({"full_name": "بلا بريد", "position_id": pa, "supervisor": True}).status_code == 400
+    lead = mk({"full_name": "مسؤول فريق أ", "position_id": pa, "email": "lead.a@company.dz", "password": "Lead#12345", "supervisor": True})
+    assert lead.status_code == 200 and lead.json()["supervisor"] and lead.json()["supervise_positions"] == [pa]
+    worker_b = mk({"full_name": "عامل ب", "position_id": pb, "email": "wb@company.dz", "password": "Worker#1234"})
+    assert worker_b.status_code == 200
+    wb_id = worker_b.json()["id"]
+    L = login(c, "lead.a@company.dz", "Lead#12345")
+    assert c.get("/api/auth/me", headers=L).json()["role"] == "inspector"
+    # يرى موظفي منصبه فقط
+    emps = c.get("/api/employees", headers=L).json()
+    assert emps and all(e["position_id"] == pa for e in emps)
+    sh = c.get("/api/sheet", headers=L).json()
+    assert sh["rows"] and all(r["id"] in {e["id"] for e in emps} for r in sh["rows"]) and sh["totals"] is None and sh["turnover"] is None
+    # لا يسجّل على عامل خارج فريقه، ويسجّل على فريقه
+    day = {"date": "2027-03-02", "counts": {"late": 1}, "loss": 0, "note": ""}
+    assert c.put("/api/violations-log/entry", json={"employee_id": wb_id, **day}, headers=L).status_code == 404
+    assert c.put("/api/violations-log/entry", json={"employee_id": emps[0]["id"], **day}, headers=L).status_code == 200
+    assert c.put("/api/sheet/turnover", json={"month": "2027-03", "turnover": 1}, headers=L).status_code == 403
+    vl = c.get("/api/violations-log?month=2027-03", headers=L).json()
+    assert all(r["employee_id"] in {e["id"] for e in emps} for r in vl["rows"])
+    # طلب عامل خارج الفريق لا يظهر له، وطلب عامل فريقه يظهر
+    WB = login(c, "wb@company.dz", "Worker#1234")
+    rb = c.post("/api/requests", json={"kind": "question", "to": "supervisor", "subject": "سؤال", "body": "؟"}, headers=WB).json()["id"]
+    assert not any(x["id"] == rb for x in c.get("/api/requests", headers=L).json())
+    assert c.get(f"/api/requests/{rb}", headers=L).status_code == 404
+    # المراسلة: عامل ب لا يراسل مراقب فريق أ
+    uid = c.get("/api/auth/me", headers=L).json()["id"]
+    assert c.post("/api/chat/send", json={"to_user_id": uid, "text": "مرحبا"}, headers=WB).status_code == 403
+    assert not any(x["user_id"] == uid for x in c.get("/api/chat/contacts", headers=WB).json())
+    # سحب الصلاحية يعيده عاملًا عاديًا
+    up = c.put(f"/api/employees/{lead.json()['id']}", json={"full_name": "مسؤول فريق أ", "position_id": pa, "email": "lead.a@company.dz", "supervisor": False}, headers=H["adm"])
+    assert up.status_code == 200 and not up.json()["supervisor"]
+    L2 = login(c, "lead.a@company.dz", "Lead#12345")
+    assert c.get("/api/auth/me", headers=L2).json()["role"] == "employee"
+    assert c.get("/api/employees", headers=L2).status_code == 403

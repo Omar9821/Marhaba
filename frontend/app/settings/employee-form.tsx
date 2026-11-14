@@ -19,7 +19,7 @@ export default function EmployeeForm() {
   const positions = useApi<Position[]>("/positions");
   const params = useApi<SheetParams>("/sheet/params");
   const [ready, setReady] = useState(!id);
-  const [f, setF] = useState({ full_name: "", phone: "", email: "", password: "", position_id: "", hire_date: "", base_salary: "", status: "active" as "active" | "inactive", perf_type: "pool" as PerfType, post_weight: "" });
+  const [f, setF] = useState({ full_name: "", phone: "", email: "", password: "", position_id: "", hire_date: "", base_salary: "", status: "active" as "active" | "inactive", perf_type: "pool" as PerfType, post_weight: "", supervisor: false, supervise_positions: [] as string[] });
   const pickPosition = (p: Position) => setF((s) => (id ? { ...s, position_id: p.id } : { ...s, position_id: p.id, perf_type: p.perf_type ?? s.perf_type, post_weight: p.post_weight == null ? s.post_weight : String(p.post_weight) }));
   const [saving, setSaving] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
@@ -29,7 +29,7 @@ export default function EmployeeForm() {
     if (!id) return;
     getCached<Employee[]>("/employees").then(({ data }) => {
       const e = data.find((x) => x.id === id);
-      if (e) setF({ full_name: e.full_name, phone: e.phone, email: e.email ?? "", password: "", position_id: e.position_id, hire_date: e.hire_date, base_salary: String(e.base_salary), status: e.status, perf_type: e.perf_type ?? "pool", post_weight: e.post_weight == null ? "" : String(e.post_weight) });
+      if (e) setF({ full_name: e.full_name, phone: e.phone, email: e.email ?? "", password: "", position_id: e.position_id, hire_date: e.hire_date, base_salary: String(e.base_salary), status: e.status, perf_type: e.perf_type ?? "pool", post_weight: e.post_weight == null ? "" : String(e.post_weight), supervisor: !!e.supervisor, supervise_positions: e.supervise_positions ?? [] });
       setReady(true);
     }).catch(() => setReady(true));
   }, [id]);
@@ -41,6 +41,7 @@ export default function EmployeeForm() {
     if (!f.full_name.trim()) return toast("الاسم الكامل مطلوب", "error");
     if (!f.position_id) return toast("اختر المنصب", "error");
     if (f.hire_date && !/^\d{4}-\d{2}-\d{2}$/.test(f.hire_date)) return toast("صيغة التاريخ: YYYY-MM-DD", "error");
+    if (f.supervisor && !f.email.trim()) return toast("أدخل البريد الإلكتروني وكلمة المرور لمنح صلاحية المراقب", "error");
     setSaving(true);
     const body = { ...f, full_name: f.full_name.trim(), email: f.email.trim() || null, password: f.password || null, base_salary: parseFloat(f.base_salary.replace(",", ".")) || 0, post_weight: f.post_weight.trim() !== "" ? parseFloat(f.post_weight.replace(",", ".")) || 0 : null };
     try {
@@ -109,6 +110,22 @@ export default function EmployeeForm() {
               <T variant="h3">حساب الدخول لبوابة الموظف</T>
               <Field testID="employee-email-input" label="البريد الإلكتروني" value={f.email} onChangeText={set("email")} autoCapitalize="none" keyboardType="email-address" placeholder="employee@company.dz" hint="يمكن للموظف الدخول به عبر Google أو بكلمة المرور" />
               <Field testID="employee-password-input" label={id ? "كلمة مرور جديدة (اختياري)" : "كلمة المرور (اختياري)"} value={f.password} onChangeText={set("password")} secureTextEntry placeholder="6 أحرف على الأقل" />
+            </Card>
+            <Card style={{ gap: S.md }}>
+              <T variant="h3">صلاحية المراقب</T>
+              <SwitchRow testID="employee-supervisor-switch" label="يراقب فريقه" hint="يمنحه المسير بوابة المراقب: يسجّل المخالفات والنتائج ويردّ على طلبات عمال الفريق الذي يحدّده فقط. صلاحياته تُضبط من الإعدادات ← صلاحيات المراقب." value={f.supervisor} onChange={(v) => set("supervisor")(v)} />
+              {f.supervisor ? (
+                <>
+                  <T variant="label" color="onSurfaceSecondary">المناصب التي يراقبها (الافتراضي: منصبه)</T>
+                  <Row style={{ flexWrap: "wrap", gap: S.sm }}>
+                    {(positions.data ?? []).map((p, i) => {
+                      const on = f.supervise_positions.includes(p.id);
+                      return <Chip key={p.id} testID={`supervise-position-${i}`} label={p.name} selected={on} onPress={() => setF((s) => ({ ...s, supervise_positions: on ? s.supervise_positions.filter((x) => x !== p.id) : [...s.supervise_positions, p.id] }))} />;
+                    })}
+                  </Row>
+                  <T variant="caption">يلزم البريد وكلمة المرور في قسم «حساب الدخول» أعلاه؛ يدخل بهما إلى بوابة المراقب ويرى فريقه فقط.</T>
+                </>
+              ) : null}
             </Card>
             <Card>
               <SwitchRow testID="employee-status-switch" label="الحالة: نشط" hint="الموظف المعطل يُحفظ سجله ولا يظهر في القوائم اليومية" value={f.status === "active"} onChange={(v) => set("status")(v ? "active" : "inactive")} />

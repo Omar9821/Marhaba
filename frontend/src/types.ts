@@ -10,6 +10,7 @@ export type Employee = {
   id: string; full_name: string; phone: string; email?: string | null; position_id: string; position_name: string;
   hire_date: string; base_salary: number; status: "active" | "inactive";
   perf_type?: PerfType; post_weight?: number | null;
+  supervisor?: boolean; supervise_positions?: string[];
 };
 export type InfType = { id: string; name: string; deduction_type: "points" | "percent" | "amount"; value: number; active: boolean };
 export type Infraction = { id: string; employee_id: string; type_id: string; date: string; note: string };
