@@ -9,7 +9,7 @@ pytest.importorskip("mongomock_motor")
 from cryptography.fernet import Fernet  # noqa: E402
 
 os.environ.update(MONGO_URL="mongodb://x", DB_NAME="t", JWT_SECRET="s", ENCRYPTION_KEY=Fernet.generate_key().decode(),
-                  ADMIN_EMAIL="admin@company.dz", ADMIN_PASSWORD="Admin@123", OWNER_EMAIL="owner@company.dz", OWNER_PASSWORD="Owner@123456")
+                  ADMIN_EMAIL="admin@company.dz", ADMIN_PASSWORD="Admin@123", INSPECTOR_EMAIL="inspector@company.dz", OWNER_EMAIL="owner@company.dz", OWNER_PASSWORD="Owner@123456")
 import motor.motor_asyncio as m  # noqa: E402
 import mongomock_motor  # noqa: E402
 

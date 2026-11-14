@@ -43,7 +43,7 @@ export default function SettingsCenter() {
         </Card>
         <T variant="label" color="muted">الصلاحيات والخصوصية</T>
         <Card style={{ paddingVertical: S.xs, gap: S.xs }}>
-          <SettingsRow testID="settings-permissions-row" icon="lock-closed-outline" title="صلاحيات المراقب والعامل" subtitle="حدّد ما يراه كل منهم، وأخفِ رقم الأعمال" onPress={() => go("/settings/permissions")} last />
+          <SettingsRow testID="settings-permissions-row" icon="lock-closed-outline" title="صلاحيات المراقب والعامل" subtitle="المراقب = مسؤول فريق تمنحه صلاحية من بطاقة الموظف؛ حدّد هنا ما يراه ويفعله" onPress={() => go("/settings/permissions")} last />
         </Card>
         <Card>
           <SwitchRow testID="privacy-switch" label="إخفاء رقم أعمال الشركة على هذا الجهاز" hint="يستبدل الأرقام الحساسة بنقاط، ويمكن إظهارها بضغطة" value={hidden} onChange={setPrivacy} />
