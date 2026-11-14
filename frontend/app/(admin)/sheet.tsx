@@ -89,7 +89,7 @@ export default function SheetScreen() {
                 <Row style={{ justifyContent: "space-between", gap: S.sm }}>
                   <View style={{ flex: 1 }}>
                     <T variant="h3" numberOfLines={1}>{r.name}</T>
-                    <T variant="caption">{typeLabel(sh.params.commission_types, r.perf_type)}{r.violations ? ` · ${r.violations} مخالفة` : ""}{r.inspections ? ` · ${r.inspections} تفتيش` : ""}</T>
+                    <T variant="caption">{r.supervisor ? "مراقب فريق · " : ""}{typeLabel(sh.params.commission_types, r.perf_type)}{r.violations ? ` · ${r.violations} مخالفة` : ""}{r.inspections ? ` · ${r.inspections} تفتيش` : ""}</T>
                   </View>
                   <Pill testID={`sheet-status-${i}`} label={r.status || "—"} tone={ok ? "success" : "warning"} />
                 </Row>

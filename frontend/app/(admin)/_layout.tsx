@@ -25,6 +25,7 @@ export default function AdminTabs() {
   const badge = useInboxSummary(known && user?.role !== "owner");
   const showVio = isAdmin || perms.view_violations !== false;
   const showSheet = isAdmin || perms.view_sheet !== false;
+  const showMine = user?.role === "inspector" && !!user?.employee_id; // مراقب مرتبط بملف موظف: أداؤه ومنحته
   useEffect(() => { refreshUser().catch(() => {}); }, []); // eslint-disable-line react-hooks/exhaustive-deps — يجلب الصلاحيات الحديثة عند الفتح
   if (usesNativeTabs) {
     return (
@@ -57,6 +58,10 @@ export default function AdminTabs() {
           <NativeTabs.Trigger.Icon sf="tablecells.fill" />
           <NativeTabs.Trigger.Label>الأداء</NativeTabs.Trigger.Label>
         </NativeTabs.Trigger>
+        <NativeTabs.Trigger name="mine" hidden={!showMine}>
+          <NativeTabs.Trigger.Icon sf="person.crop.circle.fill" />
+          <NativeTabs.Trigger.Label>أدائي</NativeTabs.Trigger.Label>
+        </NativeTabs.Trigger>
         <NativeTabs.Trigger name="index">
           <NativeTabs.Trigger.Icon sf="house.fill" />
           <NativeTabs.Trigger.Label>الرئيسية</NativeTabs.Trigger.Label>
@@ -86,6 +91,7 @@ export default function AdminTabs() {
       <Tabs.Screen name="announcements" options={{ href: showAnn ? undefined : null, title: "الإعلانات", tabBarIcon: icon("megaphone-outline"), tabBarButtonTestID: "tab-announcements" } as any} />
       <Tabs.Screen name="violations" options={{ href: showVio ? undefined : null, title: "المخالفات", tabBarIcon: icon("warning-outline"), tabBarButtonTestID: "tab-violations" } as any} />
       <Tabs.Screen name="sheet" options={{ href: showSheet ? undefined : null, title: "الأداء", tabBarIcon: icon("grid-outline"), tabBarButtonTestID: "tab-sheet" } as any} />
+      <Tabs.Screen name="mine" options={{ href: showMine ? undefined : null, title: "أدائي", tabBarIcon: icon("person-circle-outline"), tabBarButtonTestID: "tab-mine" } as any} />
       <Tabs.Screen name="index" options={{ href: !known || isAdmin ? undefined : null, title: "الرئيسية", tabBarIcon: icon("home-outline"), tabBarButtonTestID: "tab-home" } as any} />
     </Tabs>
   );

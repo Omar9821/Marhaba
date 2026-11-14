@@ -10,7 +10,7 @@ export type Employee = {
   id: string; full_name: string; phone: string; email?: string | null; position_id: string; position_name: string;
   hire_date: string; base_salary: number; status: "active" | "inactive";
   perf_type?: PerfType; post_weight?: number | null;
-  supervisor?: boolean; supervise_positions?: string[];
+  supervisor?: boolean; supervise_employees?: string[];
 };
 export type InfType = { id: string; name: string; deduction_type: "points" | "percent" | "amount"; value: number; active: boolean };
 export type Infraction = { id: string; employee_id: string; type_id: string; date: string; note: string };
@@ -51,7 +51,7 @@ export const typeLabel = (types: CommissionType[] | undefined, id: string | unde
 export const typeBaseLabel = (t?: CommissionType) => (t?.base_label ? `${t.base_label}${t.unit ? ` (${t.unit})` : ""}` : "أساس العمولة");
 export type SheetRow = {
   id: string; name: string; perf_type: PerfType; post_weight: number | null;
-  hygiene: number | null; respect: "نعم" | "لا" | null; losses: number | null; days: number | null; base: number | null; violations: number; inspections?: number;
+  hygiene: number | null; respect: "نعم" | "لا" | null; losses: number | null; days: number | null; base: number | null; violations: number; inspections?: number; supervisor?: boolean;
   hits?: { days: number; hygiene: number; respect: number } | null;
   c: number | null; e: number | null; g: number | null; i: number | null; q: number | null; r: number | null;
   s: number | null; t: number | null; u: number | null; status: string;

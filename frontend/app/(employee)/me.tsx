@@ -19,6 +19,7 @@ export default function MyPerformance() {
   const [month, setMonth] = useState(currentMonth());
   const q = useApi<{ month: string; row: SheetRow; params: SheetParams; perms: Record<string, boolean> }>(user?.employee_id ? `/me/sheet?month=${month}` : null);
   const r = q.data?.row;
+  const hist = useApi<{ months: { month: string; q: number | null; t: number | null; violations: number; losses: number | null }[] }>(user?.employee_id ? "/me/history?months=6" : null);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
@@ -51,6 +52,17 @@ export default function MyPerformance() {
             <LineItem label="المنحة المستحقة" value={r.t === null ? "—" : money(r.t)} strong />
             <LineItem label="مخالفات الشهر" value={String(r.violations)} tone={r.violations ? "error" : "muted"} />
           </Card>
+          {hist.data?.months?.length ? (
+            <Card style={{ gap: S.sm }} testID="history-card">
+              <T variant="h2">آخر الأشهر</T>
+              {hist.data.months.map((h) => (
+                <View key={h.month} style={{ gap: 4 }}>
+                  <LineItem label={h.month} value={`${pct(h.q)}${h.t === null ? "" : ` · ${money(h.t)}`}${h.violations ? ` · ${h.violations} مخالفة` : ""}`} />
+                  <ProgressBar value={h.q ?? 0} />
+                </View>
+              ))}
+            </Card>
+          ) : null}
         </ScrollView>
       ) : null}
     </View>
