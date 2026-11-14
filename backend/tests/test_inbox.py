@@ -71,15 +71,11 @@ def test_complaint_is_manager_only(c, H):
     assert c.post(f"/api/requests/{rid}/reply", json={"text": "x"}, headers=H["emp"]).status_code == 400
 
 
-def test_materials_and_issue(c, H):
-    bad = c.post("/api/requests", json={"kind": "materials", "fields": {"items": []}}, headers=H["emp"])
-    assert bad.status_code == 400
-    r = c.post("/api/requests", json={"kind": "materials", "to": "supervisor", "fields": {"category": "قطع غيار", "machine": "الفور", "items": [{"name": "فرشاة", "qty": 2, "unit": "قطعة"}]}}, headers=H["emp"])
-    rid = r.json()["id"]
-    assert c.post(f"/api/requests/{rid}/decide", json={"decision": "issued"}, headers=H["insp"]).status_code == 400  # قبل الموافقة
-    assert c.post(f"/api/requests/{rid}/decide", json={"decision": "approved"}, headers=H["insp"]).status_code == 200
-    assert c.post(f"/api/requests/{rid}/decide", json={"decision": "issued", "note": "استلمها العامل"}, headers=H["insp"]).status_code == 200
-    assert c.get(f"/api/requests/{rid}", headers=H["emp"]).json()["status"] == "issued"
+def test_materials_not_in_app(c, H):
+    # طلب المواد من المخزن يبقى على الورقة وليس في التطبيق
+    r = c.post("/api/requests", json={"kind": "materials", "fields": {"items": [{"name": "x", "qty": 1}]}}, headers=H["emp"])
+    assert r.status_code == 422
+    assert "materials" not in [k["kind"] for k in c.get("/api/requests/kinds", headers=H["emp"]).json()]
 
 
 def test_written_inquiry(c, H):
@@ -132,3 +128,42 @@ def test_chat(c, H):
     assert c.get("/api/chat/contacts", headers=H["emp"]).status_code == 403
     p["employee"]["use_messages"] = True
     c.put("/api/permissions", json=p, headers=H["adm"])
+
+
+def test_push_notifications(c, H, monkeypatch):
+    import time
+    sent = []
+    monkeypatch.setattr(server, "VAPID_PUBLIC", "pub")
+    monkeypatch.setattr(server, "VAPID_PRIVATE", "priv")
+    monkeypatch.setattr(server, "_send_one", lambda sub, payload: sent.append((sub["endpoint"], payload)) and None)
+    assert c.get("/api/push/key", headers=H["emp"]).json()["key"] == "pub"
+    for k, ep in (("emp", "https://push.example/emp"), ("insp", "https://push.example/insp"), ("adm", "https://push.example/adm")):
+        assert c.post("/api/push/subscribe", json={"endpoint": ep, "keys": {"p256dh": "a", "auth": "b"}}, headers=H[k]).status_code == 200
+    assert c.post("/api/push/subscribe", json={"endpoint": "https://push.example/x", "keys": {}}, headers=H["emp"]).status_code == 400
+    # طلب موجّه لمسؤول الورشة: يصل المراقب والمسيّر ولا يصل العامل
+    sent.clear()
+    r = c.post("/api/requests", json={"kind": "leave_exit", "to": "supervisor", "fields": {"date": "2027-03-02", "from_time": "09:00"}}, headers=H["emp"]).json()
+    time.sleep(0.4)
+    eps = {e for e, _ in sent}
+    assert eps == {"https://push.example/insp", "https://push.example/adm"}
+    # شكوى: المسيّر وحده
+    sent.clear()
+    c.post("/api/requests", json={"kind": "complaint", "subject": "س", "body": "ن"}, headers=H["emp"])
+    time.sleep(0.4)
+    assert {e for e, _ in sent} == {"https://push.example/adm"}
+    # قرار المراقب يصل العامل
+    sent.clear()
+    c.post(f"/api/requests/{r['id']}/decide", json={"decision": "approved"}, headers=H["insp"])
+    time.sleep(0.4)
+    assert {e for e, _ in sent} == {"https://push.example/emp"}
+    # رسالة مراسلة تصل المستلم فقط
+    sent.clear()
+    me = c.get("/api/auth/me", headers=H["emp"]).json()
+    c.post("/api/chat/send", json={"to_user_id": me["id"], "text": "مرحبا"}, headers=H["insp"])
+    time.sleep(0.4)
+    assert {e for e, _ in sent} == {"https://push.example/emp"}
+    assert c.post("/api/push/unsubscribe", json={"endpoint": "https://push.example/emp"}, headers=H["emp"]).status_code == 200
+    sent.clear()
+    c.post("/api/chat/send", json={"to_user_id": me["id"], "text": "مرة أخرى"}, headers=H["insp"])
+    time.sleep(0.4)
+    assert sent == []

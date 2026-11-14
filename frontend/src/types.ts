@@ -81,7 +81,7 @@ export type BranchStat = {
 export type HubOverview = { month: string; branches: BranchStat[]; totals: { employees: number; turnover: number; payable: number; gap: number; violations: number; losses: number; avg_q: number | null } };
 
 // ---- الطلبات والمراسلة ----
-export type RequestKind = "complaint" | "leave_exit" | "absence_excuse" | "materials" | "question" | "written_inquiry";
+export type RequestKind = "complaint" | "leave_exit" | "absence_excuse" | "question" | "written_inquiry";
 export type RequestStatus = "new" | "answered" | "approved" | "rejected" | "issued" | "closed" | "withdrawn";
 export type RequestSummary = {
   id: string; ref: string; kind: RequestKind; kind_label: string; to: "supervisor" | "manager"; subject: string; status: RequestStatus; status_label: string;

@@ -109,6 +109,7 @@ INDEXES: dict[str, list[IndexModel]] = {
     "requests": [IndexModel([("id", ASCENDING)], name="id", unique=True),
                  IndexModel([("employee_id", ASCENDING), ("updated_at", DESCENDING)], name="emp_updated"),
                  IndexModel([("updated_at", DESCENDING)], name="updated")],
+    "push_subs": [IndexModel([("user_id", ASCENDING), ("endpoint", ASCENDING)], name="user_endpoint", unique=True)],
     "chats": [IndexModel([("id", ASCENDING)], name="id", unique=True),
               IndexModel([("pair", ASCENDING)], name="pair")],
     "chat_messages": [IndexModel([("chat_id", ASCENDING), ("at", ASCENDING)], name="chat_at")],
@@ -1166,6 +1167,17 @@ async def create_announcement(data: AnnouncementIn, user=Depends(staff_only)):
            "employee_ids": data.employee_ids if data.audience == "selected" else [], "created_by": user.get("name") or "المسير",
            "created_by_id": user["id"], "created_at": now_utc(), "read_by": []}
     await db.announcements.insert_one(dict(doc))
+    try:
+        emps = await db.users.find({"role": "employee"}, {"_id": 0, "id": 1, "employee_id": 1}).to_list(2000)
+        if doc["audience"] == "selected":
+            emps = [u for u in emps if u.get("employee_id") in doc["employee_ids"]]
+        emp_ids = [u["id"] for u in emps] if doc["audience"] in ("all", "employees", "selected") else []
+        notify(emp_ids, "إعلان جديد", doc["title"], "/notices")
+        if doc["audience"] in ("all", "inspectors"):
+            notify([u["id"] for u in await db.users.find({"role": {"$in": ["admin", "inspector"]}, "id": {"$ne": user["id"]}}, {"_id": 0, "id": 1}).to_list(50)],
+                   "إعلان جديد", doc["title"], "/announcements")
+    except Exception as exc:  # noqa: BLE001 — الإشعار لا يمنع نشر الإعلان
+        logger.warning("announcement notify: %s", exc)
     return {"id": doc["id"]}
 
 
@@ -1186,14 +1198,96 @@ async def read_announcement(aid: str, user=Depends(current_user)):
     return {"ok": True}
 
 
+# ------------------------------- إشعارات الهاتف (Web Push) -----------------
+# تعمل خارج التطبيق عبر خدمة الإشعارات في المتصفح؛ تحتاج VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY (انظر README).
+VAPID_PUBLIC = os.environ.get("VAPID_PUBLIC_KEY", "").strip()
+VAPID_PRIVATE = os.environ.get("VAPID_PRIVATE_KEY", "").strip()
+VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "https://marhaba-app.onrender.com").strip()
+
+
+def _send_one(sub: dict, payload: str) -> Optional[int]:
+    """يرسل إشعارًا واحدًا؛ يعيد رمز الحالة عند الفشل (404/410 = اشتراك منتهٍ)."""
+    from pywebpush import WebPushException, webpush
+    try:
+        webpush(subscription_info={"endpoint": sub["endpoint"], "keys": sub["keys"]}, data=payload,
+                vapid_private_key=VAPID_PRIVATE, vapid_claims={"sub": VAPID_SUBJECT}, ttl=86400, timeout=10)
+        return None
+    except WebPushException as exc:
+        return getattr(getattr(exc, "response", None), "status_code", 0) or 0
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("push send failed: %s", exc)
+        return 0
+
+
+async def _notify_task(user_ids: List[str], title: str, body: str, url: str) -> None:
+    import json
+    subs = await db.push_subs.find({"user_id": {"$in": list(user_ids)}}, {"_id": 0}).to_list(500)
+    payload = json.dumps({"title": title, "body": body[:140], "url": url}, ensure_ascii=False)
+    for sub in subs:
+        code = await asyncio.to_thread(_send_one, sub, payload)
+        if code in (404, 410):
+            await db.push_subs.delete_one({"user_id": sub["user_id"], "endpoint": sub["endpoint"]})
+
+
+def notify(user_ids, title: str, body: str, url: str = "/") -> None:
+    """إشعار لا يعطّل الطلب الأصلي: يُرسل في الخلفية ويتجاهل الأخطاء."""
+    ids = [u for u in set(user_ids) if u]
+    if not (VAPID_PUBLIC and VAPID_PRIVATE) or not ids:
+        return
+    asyncio.create_task(_notify_task(ids, title, body, url))
+
+
+async def staff_ids(supervisor_too: bool) -> List[str]:
+    q = {"role": {"$in": ["admin", "inspector"] if supervisor_too else ["admin"]}}
+    out = []
+    for u in await db.users.find(q, {"_id": 0, "id": 1, "role": 1}).to_list(100):
+        if u["role"] == "admin" or (await perms_for(u)).get("handle_requests"):
+            out.append(u["id"])
+    return out
+
+
+async def employee_user_ids(emp_ids: List[str]) -> List[str]:
+    return [u["id"] for u in await db.users.find({"employee_id": {"$in": emp_ids}}, {"_id": 0, "id": 1}).to_list(500)]
+
+
+class PushSubIn(BaseModel):
+    endpoint: str = Field(min_length=10, max_length=1000)
+    keys: dict
+
+
+class PushUnsubIn(BaseModel):
+    endpoint: str
+
+
+@api.get("/push/key")
+async def push_key(_=Depends(current_user)):
+    return {"key": VAPID_PUBLIC or None}
+
+
+@api.post("/push/subscribe")
+async def push_subscribe(data: PushSubIn, user=Depends(current_user)):
+    if user["role"] == "owner":
+        raise HTTPException(403, "غير متاح")
+    if not data.keys.get("p256dh") or not data.keys.get("auth"):
+        raise HTTPException(400, "اشتراك غير صالح")
+    await db.push_subs.update_one({"user_id": user["id"], "endpoint": data.endpoint},
+                                  {"$set": {"keys": {"p256dh": str(data.keys["p256dh"]), "auth": str(data.keys["auth"])}, "created_at": now_utc()}}, upsert=True)
+    return {"ok": True}
+
+
+@api.post("/push/unsubscribe")
+async def push_unsubscribe(data: PushUnsubIn, user=Depends(current_user)):
+    await db.push_subs.delete_one({"user_id": user["id"], "endpoint": data.endpoint})
+    return {"ok": True}
+
+
 # ------------------------------- الطلبات والنماذج ---------------------------
-# كل طلب = نموذج رقمي (شكوى، إذن خروج، تبرير غياب، طلب مواد، سؤال) يرسله العامل إلى مسؤول الورشة أو المسيّر،
+# كل طلب = نموذج رقمي (شكوى، إذن خروج، تبرير غياب، سؤال) يرسله العامل إلى مسؤول الورشة أو المسيّر،
 # أو «استفسار كتابي» يرسله المسيّر/المراقب إلى عامل ويجب عليه الرد كتابةً. لكل طلب سلسلة ردود وقرار.
 REQUEST_KINDS = {
     "complaint": {"label": "شكوى", "to": ["manager"], "decision": False},
     "leave_exit": {"label": "إذن بالخروج", "to": ["supervisor", "manager"], "decision": True},
     "absence_excuse": {"label": "تبرير غياب", "to": ["supervisor", "manager"], "decision": True},
-    "materials": {"label": "طلب مواد من المخزن", "to": ["supervisor", "manager"], "decision": True},
     "question": {"label": "سؤال / استفسار", "to": ["supervisor", "manager"], "decision": False},
     "written_inquiry": {"label": "استفسار كتابي", "to": [], "decision": False},
 }
@@ -1203,7 +1297,7 @@ ROLE_LABEL = {"admin": "المسيّر", "inspector": "مسؤول / مراقب",
 
 
 class RequestIn(BaseModel):
-    kind: Literal["complaint", "leave_exit", "absence_excuse", "materials", "question", "written_inquiry"]
+    kind: Literal["complaint", "leave_exit", "absence_excuse", "question", "written_inquiry"]
     to: Literal["supervisor", "manager"] = "manager"
     subject: str = Field(default="", max_length=140)
     body: str = Field(default="", max_length=3000)
@@ -1217,7 +1311,7 @@ class ReplyIn(BaseModel):
 
 
 class DecideIn(BaseModel):
-    decision: Literal["approved", "rejected", "issued", "closed"]
+    decision: Literal["approved", "rejected", "closed"]
     note: str = Field(default="", max_length=1000)
 
 
@@ -1231,22 +1325,6 @@ def _clean_fields(kind: str, f: dict) -> dict:
         if not s("from_date"):
             raise HTTPException(400, "حدّد تاريخ الغياب")
         return {"from_date": s("from_date", 10), "to_date": s("to_date", 10) or s("from_date", 10), "has_document": bool(f.get("has_document"))}
-    if kind == "materials":
-        items = []
-        for it in (f.get("items") or [])[:15]:
-            name = str(it.get("name", "")).strip()[:120]
-            if not name:
-                continue
-            try:
-                qty = float(it.get("qty") or 0)
-            except (TypeError, ValueError):
-                qty = 0
-            if qty <= 0:
-                raise HTTPException(400, f"الكمية غير صحيحة للمادة «{name}»")
-            items.append({"name": name, "ref": str(it.get("ref", "")).strip()[:40], "unit": str(it.get("unit", "")).strip()[:20], "qty": qty})
-        if not items:
-            raise HTTPException(400, "أضف مادة واحدة على الأقل")
-        return {"items": items, "category": s("category", 40), "purpose": s("purpose"), "machine": s("machine")}
     return {}
 
 
@@ -1280,7 +1358,7 @@ def _req_summary(r: dict, user: dict) -> dict:
     unread = r.get("unread_staff") if _is_staff(user) else r.get("unread_employee")
     last = (r.get("thread") or [])[-1:] or [{}]
     o = _req_iso({k: r.get(k) for k in ("id", "ref", "kind", "to", "subject", "status", "employee_id", "employee_name", "position_name", "created_at", "updated_at", "due_at", "created_by", "created_by_role")})
-    o.update({"kind_label": REQUEST_KINDS[r["kind"]]["label"], "status_label": REQUEST_STATUS[r["status"]], "overdue": overdue, "unread": bool(unread),
+    o.update({"kind_label": REQUEST_KINDS.get(r["kind"], {"label": "طلب"})["label"], "status_label": REQUEST_STATUS[r["status"]], "overdue": overdue, "unread": bool(unread),
               "replies": len(r.get("thread") or []), "last_text": (last[0].get("text") or "")[:90]})
     return o
 
@@ -1329,7 +1407,7 @@ async def create_request(data: RequestIn, user=Depends(current_user)):
     pos = await db.positions.find_one({"id": (emp or {}).get("position_id")}, {"_id": 0, "name": 1}) or {}
     fields = _clean_fields(data.kind, data.fields or {})
     now = now_utc()
-    subject = data.subject.strip() or {"leave_exit": "طلب إذن بالخروج", "absence_excuse": "تبرير غياب", "materials": "طلب مواد من المخزن"}.get(data.kind, spec["label"])
+    subject = data.subject.strip() or {"leave_exit": "طلب إذن بالخروج", "absence_excuse": "تبرير غياب"}.get(data.kind, spec["label"])
     thread = []
     if data.body.strip():
         thread.append({"id": new_id(), "by_id": user["id"], "by_name": user.get("name") or "", "by_role": user["role"], "text": data.body.strip(), "at": now, "type": "message"})
@@ -1340,6 +1418,10 @@ async def create_request(data: RequestIn, user=Depends(current_user)):
            "due_at": (now + timedelta(hours=data.deadline_hours)) if data.kind == "written_inquiry" else None,
            "unread_staff": data.kind != "written_inquiry", "unread_employee": data.kind == "written_inquiry"}
     await db.requests.insert_one(dict(doc))
+    if data.kind == "written_inquiry":
+        notify(await employee_user_ids([emp["id"]]), "استفسار كتابي من الإدارة", doc["subject"], f"/request/{doc['id']}")
+    else:
+        notify(await staff_ids(to == "supervisor"), f"{spec['label']} جديد", f"{emp['full_name']}: {doc['subject']}", f"/request/{doc['id']}")
     return {"id": doc["id"], "ref": doc["ref"]}
 
 
@@ -1386,7 +1468,7 @@ async def get_request(rid: str, user=Depends(current_user)):
     flag = "unread_staff" if _is_staff(user) else "unread_employee"
     if r.get(flag):
         await db.requests.update_one({"id": rid}, {"$set": {flag: False}})
-    spec = REQUEST_KINDS[r["kind"]]
+    spec = REQUEST_KINDS.get(r["kind"], {"label": "طلب", "decision": False})
     out = _req_iso(r)
     out.pop("unread_staff", None)
     out.pop("unread_employee", None)
@@ -1417,6 +1499,10 @@ async def reply_request(rid: str, data: ReplyIn, user=Depends(current_user)):
     elif r["kind"] == "written_inquiry" and not staff and r["status"] == "new":
         upd["status"] = "answered"
     await db.requests.update_one({"id": rid}, {"$set": upd, "$push": {"thread": msg}})
+    if staff:
+        notify(await employee_user_ids([r["employee_id"]]), "ردّ على طلبك", f"{user.get('name') or 'الإدارة'}: {data.text.strip()}", f"/request/{rid}")
+    else:
+        notify(await staff_ids(r.get("to") == "supervisor" or r["kind"] == "written_inquiry"), f"ردّ من {r['employee_name']}", data.text.strip(), f"/request/{rid}")
     return {"ok": True}
 
 
@@ -1429,23 +1515,20 @@ async def decide_request(rid: str, data: DecideIn, user=Depends(staff_only)):
         pass
     else:
         await require(user, "decide_requests")
-        if not REQUEST_KINDS[r["kind"]]["decision"]:
+        if not REQUEST_KINDS.get(r["kind"], {}).get("decision"):
             raise HTTPException(400, "لا يتطلب هذا النوع قرارًا")
-        if data.decision == "issued" and r["kind"] != "materials":
-            raise HTTPException(400, "الصرف خاص بطلبات المواد")
-        if data.decision == "issued" and r["status"] != "approved":
-            raise HTTPException(400, "يُصرف الطلب بعد الموافقة عليه")
         if r["status"] in ("closed", "withdrawn", "rejected", "issued"):
             raise HTTPException(400, "تم البتّ في هذا الطلب")
     if data.decision == "closed" and r["status"] in ("closed", "withdrawn"):
         raise HTTPException(400, "الطلب مغلق")
     now = now_utc()
-    label = {"approved": "الموافقة على الطلب", "rejected": "رفض الطلب", "issued": "تأكيد صرف المواد من المخزن", "closed": "إغلاق الطلب"}[data.decision]
+    label = {"approved": "الموافقة على الطلب", "rejected": "رفض الطلب", "closed": "إغلاق الطلب"}[data.decision]
     msg = {"id": new_id(), "by_id": user["id"], "by_name": user.get("name") or "", "by_role": user["role"],
            "text": label + (f": {data.note.strip()}" if data.note.strip() else ""), "at": now, "type": "decision"}
     await db.requests.update_one({"id": rid}, {"$set": {"status": data.decision, "updated_at": now, "unread_employee": True, "unread_staff": False,
                                                        "decision": {"by": user.get("name") or "", "role": user["role"], "at": now, "note": data.note.strip()}},
                                               "$push": {"thread": msg}})
+    notify(await employee_user_ids([r["employee_id"]]), "قرار بخصوص طلبك", label, f"/request/{rid}")
     return {"ok": True}
 
 
@@ -1533,6 +1616,7 @@ async def chat_send(data: ChatSendIn, user=Depends(current_user)):
                                                           f"names.{user['id']}": user.get("name") or "", f"names.{other['id']}": other.get("name") or "",
                                                           f"roles.{user['id']}": user["role"], f"roles.{other['id']}": other["role"]},
                                            "$inc": {f"unread.{other['id']}": 1}})
+    notify([other["id"]], user.get("name") or "رسالة جديدة", msg["text"], f"/chat/{user['id']}")
     return {"id": msg["id"], "chat_id": chat["id"]}
 
 
