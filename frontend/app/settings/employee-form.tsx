@@ -18,8 +18,9 @@ export default function EmployeeForm() {
   const toast = useToast();
   const positions = useApi<Position[]>("/positions");
   const params = useApi<SheetParams>("/sheet/params");
+  const staff = useApi<Employee[]>("/employees");
   const [ready, setReady] = useState(!id);
-  const [f, setF] = useState({ full_name: "", phone: "", email: "", password: "", position_id: "", hire_date: "", base_salary: "", status: "active" as "active" | "inactive", perf_type: "pool" as PerfType, post_weight: "", supervisor: false, supervise_positions: [] as string[] });
+  const [f, setF] = useState({ full_name: "", phone: "", email: "", password: "", position_id: "", hire_date: "", base_salary: "", status: "active" as "active" | "inactive", perf_type: "pool" as PerfType, post_weight: "", supervisor: false, supervise_employees: [] as string[] });
   const pickPosition = (p: Position) => setF((s) => (id ? { ...s, position_id: p.id } : { ...s, position_id: p.id, perf_type: p.perf_type ?? s.perf_type, post_weight: p.post_weight == null ? s.post_weight : String(p.post_weight) }));
   const [saving, setSaving] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
@@ -29,7 +30,7 @@ export default function EmployeeForm() {
     if (!id) return;
     getCached<Employee[]>("/employees").then(({ data }) => {
       const e = data.find((x) => x.id === id);
-      if (e) setF({ full_name: e.full_name, phone: e.phone, email: e.email ?? "", password: "", position_id: e.position_id, hire_date: e.hire_date, base_salary: String(e.base_salary), status: e.status, perf_type: e.perf_type ?? "pool", post_weight: e.post_weight == null ? "" : String(e.post_weight), supervisor: !!e.supervisor, supervise_positions: e.supervise_positions ?? [] });
+      if (e) setF({ full_name: e.full_name, phone: e.phone, email: e.email ?? "", password: "", position_id: e.position_id, hire_date: e.hire_date, base_salary: String(e.base_salary), status: e.status, perf_type: e.perf_type ?? "pool", post_weight: e.post_weight == null ? "" : String(e.post_weight), supervisor: !!e.supervisor, supervise_employees: e.supervise_employees ?? [] });
       setReady(true);
     }).catch(() => setReady(true));
   }, [id]);
@@ -72,7 +73,7 @@ export default function EmployeeForm() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
       <Header back title={id ? "تعديل موظف" : "موظف جديد"} />
-      {!ready || positions.loading || params.loading ? (
+      {!ready || positions.loading || params.loading || staff.loading ? (
         <Loading />
       ) : (
         <>
@@ -116,14 +117,18 @@ export default function EmployeeForm() {
               <SwitchRow testID="employee-supervisor-switch" label="يراقب فريقه" hint="يمنحه المسير بوابة المراقب: يسجّل المخالفات والنتائج ويردّ على طلبات عمال الفريق الذي يحدّده فقط. صلاحياته تُضبط من الإعدادات ← صلاحيات المراقب." value={f.supervisor} onChange={(v) => set("supervisor")(v)} />
               {f.supervisor ? (
                 <>
-                  <T variant="label" color="onSurfaceSecondary">المناصب التي يراقبها (الافتراضي: منصبه)</T>
+                  <T variant="label" color="onSurfaceSecondary">العمال التابعون له ({f.supervise_employees.length})</T>
                   <Row style={{ flexWrap: "wrap", gap: S.sm }}>
-                    {(positions.data ?? []).map((p, i) => {
-                      const on = f.supervise_positions.includes(p.id);
-                      return <Chip key={p.id} testID={`supervise-position-${i}`} label={p.name} selected={on} onPress={() => setF((s) => ({ ...s, supervise_positions: on ? s.supervise_positions.filter((x) => x !== p.id) : [...s.supervise_positions, p.id] }))} />;
+                    <Chip testID="supervise-same-position" label="كل عمال منصبه" selected={false} onPress={() => setF((s) => ({ ...s, supervise_employees: Array.from(new Set([...s.supervise_employees, ...(staff.data ?? []).filter((e) => e.position_id === s.position_id && e.id !== id && e.status === "active").map((e) => e.id)])) }))} />
+                    <Chip testID="supervise-clear" label="مسح الاختيار" selected={false} onPress={() => setF((s) => ({ ...s, supervise_employees: [] }))} />
+                  </Row>
+                  <Row style={{ flexWrap: "wrap", gap: S.sm }}>
+                    {(staff.data ?? []).filter((e) => e.id !== id && e.status === "active").map((e, i) => {
+                      const on = f.supervise_employees.includes(e.id);
+                      return <Chip key={e.id} testID={`supervise-employee-${i}`} label={`${e.full_name} · ${e.position_name}`} selected={on} onPress={() => setF((s) => ({ ...s, supervise_employees: on ? s.supervise_employees.filter((x) => x !== e.id) : [...s.supervise_employees, e.id] }))} />;
                     })}
                   </Row>
-                  <T variant="caption">يلزم البريد وكلمة المرور في قسم «حساب الدخول» أعلاه؛ يدخل بهما إلى بوابة المراقب ويرى فريقه فقط.</T>
+                  <T variant="caption">يلزم البريد وكلمة المرور في قسم «حساب الدخول» أعلاه. يرى المراقب هؤلاء العمال فقط، ولا يراقب نفسه: يقيّمه المسير من جدول الأداء ويرى هو نتيجته ومنحته في تبويب «أدائي».</T>
                 </>
               ) : null}
             </Card>

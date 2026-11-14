@@ -197,7 +197,7 @@ class EmployeeIn(BaseModel):
     perf_type: str = Field(default="pool", min_length=1)
     post_weight: Optional[float] = Field(default=None, ge=0)
     supervisor: bool = False                      # صلاحية «مراقب» يمنحها المسير لمسؤول فريق
-    supervise_positions: Optional[List[str]] = None  # المناصب التي يراقبها (الافتراضي: منصبه)
+    supervise_employees: Optional[List[str]] = None  # العمال التابعون له (يحدّدهم المسير بالاسم)
 
 
 class InfractionTypeIn(BaseModel):
@@ -586,7 +586,7 @@ def employee_out(e: dict, positions: dict) -> dict:
             "position_id": e["position_id"], "position_name": positions.get(e["position_id"], {}).get("name", "—"),
             "hire_date": e.get("hire_date", ""), "base_salary": float(dec(e.get("base_salary_enc")) or 0),
             "status": e.get("status", "active"), "perf_type": e.get("perf_type", "pool"), "post_weight": e.get("post_weight"),
-            "supervisor": bool(e.get("supervisor")), "supervise_positions": e.get("supervise_positions") or []}
+            "supervisor": bool(e.get("supervisor")), "supervise_employees": e.get("supervise_employees") or []}
 
 
 async def positions_map() -> dict:
@@ -610,7 +610,7 @@ async def sync_employee_user(emp_id: str, name: str, email: Optional[str], passw
         raise HTTPException(400, "أدخل كلمة مرور لحساب المراقب")
     await db.users.update_many({"employee_id": emp_id, "email": {"$ne": email}}, {"$set": {"employee_id": None}})
     upd = {"email": email, "name": name, "role": "inspector" if supervisor else "employee", "employee_id": emp_id,
-           "scope_positions": list(scope or []) if supervisor else None}
+           "scope_employees": list(scope or []) if supervisor else None, "scope_positions": None}
     if password:
         if len(password) < 6:
             raise HTTPException(400, "كلمة المرور قصيرة جداً (6 أحرف على الأقل)")
@@ -618,22 +618,26 @@ async def sync_employee_user(emp_id: str, name: str, email: Optional[str], passw
     await db.users.update_one({"email": email}, {"$set": upd, "$setOnInsert": {"id": new_id(), "created_at": now_utc()}}, upsert=True)
 
 
-async def clean_scope(position_id: str, supervisor: bool, wanted: Optional[List[str]]) -> List[str]:
+async def clean_scope(emp_id: str, supervisor: bool, wanted: Optional[List[str]]) -> List[str]:
+    """العمال التابعون للمراقب: موظفون موجودون، ولا يراقب نفسه (يقيّمه المسير)."""
     if not supervisor:
         return []
-    known = {p["id"] for p in await db.positions.find({}, {"_id": 0, "id": 1}).to_list(500)}
-    out = [x for x in (wanted or []) if x in known]
-    return out or [position_id]
+    known = {e["id"] for e in await db.employees.find({}, {"_id": 0, "id": 1}).to_list(5000)}
+    return [x for x in dict.fromkeys(wanted or []) if x in known and x != emp_id]
 
 
 async def scope_of(user: dict) -> Optional[set]:
     """معرّفات العمال الذين يراقبهم المستخدم؛ None = بلا قيد (المسير، أو مراقب قديم غير مقيَّد)."""
-    if user["role"] != "inspector" or user.get("scope_positions") is None:
+    if user["role"] != "inspector":
         return None
-    if "_scope" not in user:
-        emps = await db.employees.find({"position_id": {"$in": user["scope_positions"]}}, {"_id": 0, "id": 1}).to_list(5000)
-        user["_scope"] = {e["id"] for e in emps}
-    return user["_scope"]
+    if user.get("scope_employees") is not None:
+        return set(user["scope_employees"]) - {user.get("employee_id")}
+    if user.get("scope_positions") is not None:  # حسابات قديمة مقيَّدة بمناصب
+        if "_scope" not in user:
+            emps = await db.employees.find({"position_id": {"$in": user["scope_positions"]}}, {"_id": 0, "id": 1}).to_list(5000)
+            user["_scope"] = {e["id"] for e in emps} - {user.get("employee_id")}
+        return user["_scope"]
+    return None
 
 
 async def in_scope(user: dict, emp_id: str) -> bool:
@@ -661,12 +665,12 @@ async def create_employee(data: EmployeeIn, _=Depends(admin_only)):
     if not await db.positions.find_one({"id": data.position_id}):
         raise HTTPException(400, "المنصب غير موجود")
     eid = new_id()
-    scope = await clean_scope(data.position_id, data.supervisor, data.supervise_positions)
+    scope = await clean_scope(eid, data.supervisor, data.supervise_employees)
     await sync_employee_user(eid, data.full_name, data.email, data.password, data.supervisor, scope)
     doc = {"id": eid, "full_name": data.full_name, "phone_enc": enc(data.phone), "email": (data.email or "").strip().lower() or None,
            "position_id": data.position_id, "hire_date": data.hire_date, "base_salary_enc": enc(data.base_salary),
            "status": data.status, "perf_type": data.perf_type, "post_weight": data.post_weight, "created_at": now_utc(),
-           "supervisor": data.supervisor, "supervise_positions": scope}
+           "supervisor": data.supervisor, "supervise_employees": scope}
     await db.employees.insert_one(dict(doc))
     return employee_out(doc, await positions_map())
 
@@ -675,11 +679,11 @@ async def create_employee(data: EmployeeIn, _=Depends(admin_only)):
 async def update_employee(eid: str, data: EmployeeIn, _=Depends(admin_only)):
     if not await db.employees.find_one({"id": eid}):
         raise HTTPException(404, "الموظف غير موجود")
-    scope = await clean_scope(data.position_id, data.supervisor, data.supervise_positions)
+    scope = await clean_scope(eid, data.supervisor, data.supervise_employees)
     await sync_employee_user(eid, data.full_name, data.email, data.password, data.supervisor, scope)
     upd = {"full_name": data.full_name, "phone_enc": enc(data.phone), "email": (data.email or "").strip().lower() or None,
            "position_id": data.position_id, "hire_date": data.hire_date, "base_salary_enc": enc(data.base_salary), "status": data.status,
-           "perf_type": data.perf_type, "post_weight": data.post_weight, "supervisor": data.supervisor, "supervise_positions": scope}
+           "perf_type": data.perf_type, "post_weight": data.post_weight, "supervisor": data.supervisor, "supervise_employees": scope}
     await db.employees.update_one({"id": eid}, {"$set": upd})
     return employee_out({"id": eid, **upd}, await positions_map())
 
@@ -1022,7 +1026,8 @@ async def build_sheet(month: str, only_employee: Optional[str] = None) -> dict:
         rows_in.append({"id": e["id"], "name": e["full_name"], "perf_type": e.get("perf_type", "pool"),
                         "post_weight": e.get("post_weight"), "hygiene": auto["hygiene"], "respect": auto["respect"],
                         "losses": v["loss"], "days": auto["days"], "base": x.get("base"), "hits": auto["hits"],
-                        "violations": sum(int(n) for n in v["counts"].values()), "inspections": len(v["dates"])})
+                        "violations": sum(int(n) for n in v["counts"].values()), "inspections": len(v["dates"]),
+                        "supervisor": bool(e.get("supervisor"))})
     res = sheet.calc_sheet(params, turnover, rows_in)
     res["month"], res["turnover"] = month, turnover
     return res
@@ -1170,6 +1175,27 @@ async def my_sheet(month: Optional[str] = None, user=Depends(current_user)):
     return {"month": month, "row": row, "params": params, "perms": perms}
 
 
+@api.get("/me/history")
+async def my_history(months: int = 6, user=Depends(current_user)):
+    """أداء الموظف (أو المراقب نفسه) في آخر أشهر: نتيجة الأداء والمنحة والمخالفات."""
+    if not user.get("employee_id"):
+        raise HTTPException(404, "حسابك غير مرتبط بملف موظف بعد")
+    months = max(1, min(int(months), 12))
+    y, m = map(int, current_month().split("-"))
+    out = []
+    for i in range(months):
+        mm = m - i
+        yy = y + (mm - 1) // 12
+        mm = (mm - 1) % 12 + 1
+        month = f"{yy:04d}-{mm:02d}"
+        res = await build_sheet(month, only_employee=user["employee_id"])
+        row = next((r for r in res["rows"] if r["id"] == user["employee_id"]), None)
+        if row:
+            out.append({"month": month, "q": row["q"], "t": row["t"] if (user["role"] != "employee" or (await perms_for(user)).get("view_amounts")) else None,
+                        "violations": row["violations"], "losses": row["losses"]})
+    return {"months": out}
+
+
 # ------------------------------- Announcements ----------------------------
 class AnnouncementIn(BaseModel):
     title: str = Field(min_length=1, max_length=120)
@@ -1289,7 +1315,7 @@ def notify(user_ids, title: str, body: str, url: str = "/") -> None:
 async def staff_ids(supervisor_too: bool, emp_id: Optional[str] = None) -> List[str]:
     q = {"role": {"$in": ["admin", "inspector"] if supervisor_too else ["admin"]}}
     out = []
-    for u in await db.users.find(q, {"_id": 0, "id": 1, "role": 1, "scope_positions": 1}).to_list(100):
+    for u in await db.users.find(q, {"_id": 0, "id": 1, "role": 1, "scope_positions": 1, "scope_employees": 1, "employee_id": 1}).to_list(100):
         if emp_id and not await in_scope(u, emp_id):
             continue
         if u["role"] == "admin" or (await perms_for(u)).get("handle_requests"):
