@@ -80,6 +80,8 @@ logger = logging.getLogger(__name__)
 #   violation_logs     {employee_id, date, month, counts:{code:int}, loss (دج), note}  unique(employee_id,date)
 #                      ← عدة تفتيشات في الشهر: كل تاريخ سجل مستقل، والشهر = مجموعها
 #   announcements      {id, title, body, audience: all|employees|inspectors|selected, employee_ids, created_by, read_by:[user_id]}
+#   requests           {id, ref, kind, to, subject, fields, status, employee_id, thread:[{by_id,by_name,by_role,text,at,type}], due_at, unread_staff/employee}
+#   chats / chat_messages  مراسلة ثنائية (pair=[user_id,user_id]) ورسائلها
 #   settings (id:"permissions")  صلاحيات المراقب والعامل (انظر DEFAULT_PERMS)
 # قاعدة البوابة (…__hub): branches {id, name, activity, db_name, active} · owners {id, email, name, password_hash}
 #   infraction_types   {id, name, deduction_type: points|percent|amount, value, active}
@@ -104,6 +106,12 @@ INDEXES: dict[str, list[IndexModel]] = {
                        IndexModel([("month", ASCENDING)], name="month")],
     "announcements": [IndexModel([("id", ASCENDING)], name="id", unique=True),
                       IndexModel([("created_at", DESCENDING)], name="created")],
+    "requests": [IndexModel([("id", ASCENDING)], name="id", unique=True),
+                 IndexModel([("employee_id", ASCENDING), ("updated_at", DESCENDING)], name="emp_updated"),
+                 IndexModel([("updated_at", DESCENDING)], name="updated")],
+    "chats": [IndexModel([("id", ASCENDING)], name="id", unique=True),
+              IndexModel([("pair", ASCENDING)], name="pair")],
+    "chat_messages": [IndexModel([("chat_id", ASCENDING), ("at", ASCENDING)], name="chat_at")],
     "infractions": [IndexModel([("id", ASCENDING)], name="id", unique=True),
                     IndexModel([("employee_id", ASCENDING), ("date", DESCENDING)], name="emp_date"),
                     IndexModel([("date", DESCENDING)], name="date")],
@@ -312,8 +320,10 @@ DEFAULT_PERMS = {
         "view_sheet": True, "view_amounts": False, "view_turnover": False, "view_base": False,
         "edit_base": False, "edit_turnover": False, "view_violations": True, "edit_violations": True,
         "enter_losses": True, "view_contacts": False, "view_announcements": True, "send_announcements": False,
+        "handle_requests": True, "decide_requests": True, "use_messages": True,
     },
-    "employee": {"view_amounts": True, "view_base": True, "view_violations": True, "view_announcements": True},
+    "employee": {"view_amounts": True, "view_base": True, "view_violations": True, "view_announcements": True,
+                 "send_requests": True, "use_messages": True},
 }
 PERM_SCHEMA = [
     {"role": "inspector", "key": "view_sheet", "label": "رؤية جدول الأداء (النتائج)"},
@@ -328,10 +338,15 @@ PERM_SCHEMA = [
     {"role": "inspector", "key": "view_contacts", "label": "رؤية الهواتف والرواتب"},
     {"role": "inspector", "key": "view_announcements", "label": "رؤية الإعلانات"},
     {"role": "inspector", "key": "send_announcements", "label": "إرسال الإعلانات"},
+    {"role": "inspector", "key": "handle_requests", "label": "الرد على الطلبات الموجّهة إليه وإصدار الاستفسارات الكتابية"},
+    {"role": "inspector", "key": "decide_requests", "label": "الموافقة على الطلبات أو رفضها (إذن خروج، غياب، مواد)"},
+    {"role": "inspector", "key": "use_messages", "label": "المراسلة مع العمال والمسيّر"},
     {"role": "employee", "key": "view_amounts", "label": "رؤية مبلغ منحته بالدينار"},
     {"role": "employee", "key": "view_base", "label": "رؤية رقم أعماله المحقق (أساس عمولته)"},
     {"role": "employee", "key": "view_violations", "label": "رؤية مخالفاته وتفاصيل مؤشراته"},
     {"role": "employee", "key": "view_announcements", "label": "رؤية الإعلانات"},
+    {"role": "employee", "key": "send_requests", "label": "تقديم الطلبات والنماذج (شكوى، إذن، تبرير، مواد)"},
+    {"role": "employee", "key": "use_messages", "label": "المراسلة مع مسؤول الورشة والمسيّر"},
 ]
 
 
@@ -1169,6 +1184,387 @@ async def delete_announcement(aid: str, user=Depends(staff_only)):
 async def read_announcement(aid: str, user=Depends(current_user)):
     await db.announcements.update_one({"id": aid}, {"$addToSet": {"read_by": user["id"]}})
     return {"ok": True}
+
+
+# ------------------------------- الطلبات والنماذج ---------------------------
+# كل طلب = نموذج رقمي (شكوى، إذن خروج، تبرير غياب، طلب مواد، سؤال) يرسله العامل إلى مسؤول الورشة أو المسيّر،
+# أو «استفسار كتابي» يرسله المسيّر/المراقب إلى عامل ويجب عليه الرد كتابةً. لكل طلب سلسلة ردود وقرار.
+REQUEST_KINDS = {
+    "complaint": {"label": "شكوى", "to": ["manager"], "decision": False},
+    "leave_exit": {"label": "إذن بالخروج", "to": ["supervisor", "manager"], "decision": True},
+    "absence_excuse": {"label": "تبرير غياب", "to": ["supervisor", "manager"], "decision": True},
+    "materials": {"label": "طلب مواد من المخزن", "to": ["supervisor", "manager"], "decision": True},
+    "question": {"label": "سؤال / استفسار", "to": ["supervisor", "manager"], "decision": False},
+    "written_inquiry": {"label": "استفسار كتابي", "to": [], "decision": False},
+}
+REQUEST_STATUS = {"new": "جديد", "answered": "تم الرد", "approved": "موافَق عليه", "rejected": "مرفوض", "issued": "تم الصرف",
+                  "closed": "مغلق", "withdrawn": "مسحوب"}
+ROLE_LABEL = {"admin": "المسيّر", "inspector": "مسؤول / مراقب", "employee": "عامل", "owner": "المسؤول العام"}
+
+
+class RequestIn(BaseModel):
+    kind: Literal["complaint", "leave_exit", "absence_excuse", "materials", "question", "written_inquiry"]
+    to: Literal["supervisor", "manager"] = "manager"
+    subject: str = Field(default="", max_length=140)
+    body: str = Field(default="", max_length=3000)
+    fields: dict = {}
+    employee_id: Optional[str] = None      # للاستفسار الكتابي: العامل المعني
+    deadline_hours: int = Field(default=48, ge=1, le=720)
+
+
+class ReplyIn(BaseModel):
+    text: str = Field(min_length=1, max_length=3000)
+
+
+class DecideIn(BaseModel):
+    decision: Literal["approved", "rejected", "issued", "closed"]
+    note: str = Field(default="", max_length=1000)
+
+
+def _clean_fields(kind: str, f: dict) -> dict:
+    def s(k, n=200): return str(f.get(k, "") or "").strip()[:n]
+    if kind == "leave_exit":
+        if not s("date") or not s("from_time"):
+            raise HTTPException(400, "حدّد تاريخ الخروج وساعته")
+        return {"date": s("date", 10), "from_time": s("from_time", 5), "to_time": s("to_time", 5)}
+    if kind == "absence_excuse":
+        if not s("from_date"):
+            raise HTTPException(400, "حدّد تاريخ الغياب")
+        return {"from_date": s("from_date", 10), "to_date": s("to_date", 10) or s("from_date", 10), "has_document": bool(f.get("has_document"))}
+    if kind == "materials":
+        items = []
+        for it in (f.get("items") or [])[:15]:
+            name = str(it.get("name", "")).strip()[:120]
+            if not name:
+                continue
+            try:
+                qty = float(it.get("qty") or 0)
+            except (TypeError, ValueError):
+                qty = 0
+            if qty <= 0:
+                raise HTTPException(400, f"الكمية غير صحيحة للمادة «{name}»")
+            items.append({"name": name, "ref": str(it.get("ref", "")).strip()[:40], "unit": str(it.get("unit", "")).strip()[:20], "qty": qty})
+        if not items:
+            raise HTTPException(400, "أضف مادة واحدة على الأقل")
+        return {"items": items, "category": s("category", 40), "purpose": s("purpose"), "machine": s("machine")}
+    return {}
+
+
+def _req_iso(r: dict) -> dict:
+    out = dict(r)
+    for k in ("created_at", "updated_at", "due_at"):
+        if hasattr(out.get(k), "isoformat"):
+            v = out[k]
+            if v.tzinfo is None:
+                v = v.replace(tzinfo=timezone.utc)
+            out[k] = v.isoformat()
+    out["thread"] = [{**t, "at": (t["at"].replace(tzinfo=timezone.utc) if t["at"].tzinfo is None else t["at"]).isoformat() if hasattr(t["at"], "isoformat") else t["at"]} for t in r.get("thread", [])]
+    return out
+
+
+def _is_staff(user: dict) -> bool:
+    return user["role"] in ("admin", "inspector")
+
+
+async def _can_see_request(r: dict, user: dict) -> bool:
+    if user["role"] == "admin":
+        return True
+    if user["role"] == "inspector":
+        return r.get("created_by_id") == user["id"] or (r["kind"] != "complaint" and r.get("to") == "supervisor") or (r["kind"] == "written_inquiry" and r.get("created_by_role") == "inspector")
+    return r.get("employee_id") == user.get("employee_id") and bool(user.get("employee_id"))
+
+
+def _req_summary(r: dict, user: dict) -> dict:
+    due = r.get("due_at")
+    overdue = bool(due and r["status"] == "new" and r["kind"] == "written_inquiry" and (due.replace(tzinfo=timezone.utc) if due.tzinfo is None else due) < now_utc())
+    unread = r.get("unread_staff") if _is_staff(user) else r.get("unread_employee")
+    last = (r.get("thread") or [])[-1:] or [{}]
+    o = _req_iso({k: r.get(k) for k in ("id", "ref", "kind", "to", "subject", "status", "employee_id", "employee_name", "position_name", "created_at", "updated_at", "due_at", "created_by", "created_by_role")})
+    o.update({"kind_label": REQUEST_KINDS[r["kind"]]["label"], "status_label": REQUEST_STATUS[r["status"]], "overdue": overdue, "unread": bool(unread),
+              "replies": len(r.get("thread") or []), "last_text": (last[0].get("text") or "")[:90]})
+    return o
+
+
+async def _next_ref() -> str:
+    n = await db.requests.count_documents({}) + 1
+    return f"REQ-{datetime.now().year}-{n:04d}"
+
+
+@api.get("/requests/kinds")
+async def request_kinds(user=Depends(current_user)):
+    if user["role"] == "owner":
+        raise HTTPException(403, "غير متاح")
+    return [{"kind": k, **v} for k, v in REQUEST_KINDS.items() if (k == "written_inquiry") == _is_staff(user)]
+
+
+@api.post("/requests")
+async def create_request(data: RequestIn, user=Depends(current_user)):
+    if user["role"] == "owner":
+        raise HTTPException(403, "غير متاح")
+    spec = REQUEST_KINDS[data.kind]
+    emp = None
+    if data.kind == "written_inquiry":
+        if not _is_staff(user):
+            raise HTTPException(403, "الاستفسار الكتابي يصدر من الإدارة فقط")
+        await require(user, "handle_requests")
+        if not data.employee_id:
+            raise HTTPException(400, "اختر العامل المعني")
+        emp = await db.employees.find_one({"id": data.employee_id}, {"_id": 0})
+        if not emp:
+            raise HTTPException(404, "العامل غير موجود")
+        if not data.subject.strip() or not data.body.strip():
+            raise HTTPException(400, "اكتب موضوع الاستفسار ونصه")
+        to = "manager"
+    else:
+        if user["role"] != "employee" or not user.get("employee_id"):
+            raise HTTPException(403, "هذا النموذج يقدّمه العامل")
+        if not (await perms_for(user)).get("send_requests"):
+            raise HTTPException(403, "لا تملك صلاحية تقديم الطلبات")
+        emp = await db.employees.find_one({"id": user["employee_id"]}, {"_id": 0})
+        to = data.to if data.to in spec["to"] else spec["to"][0]
+        if data.kind in ("complaint", "question") and not data.body.strip():
+            raise HTTPException(400, "اكتب نص الطلب")
+        if data.kind == "complaint" and not data.subject.strip():
+            raise HTTPException(400, "اكتب موضوع الشكوى")
+    pos = await db.positions.find_one({"id": (emp or {}).get("position_id")}, {"_id": 0, "name": 1}) or {}
+    fields = _clean_fields(data.kind, data.fields or {})
+    now = now_utc()
+    subject = data.subject.strip() or {"leave_exit": "طلب إذن بالخروج", "absence_excuse": "تبرير غياب", "materials": "طلب مواد من المخزن"}.get(data.kind, spec["label"])
+    thread = []
+    if data.body.strip():
+        thread.append({"id": new_id(), "by_id": user["id"], "by_name": user.get("name") or "", "by_role": user["role"], "text": data.body.strip(), "at": now, "type": "message"})
+    doc = {"id": new_id(), "ref": await _next_ref(), "kind": data.kind, "to": to, "subject": subject, "fields": fields, "status": "new",
+           "employee_id": emp["id"], "employee_name": emp["full_name"], "position_name": pos.get("name", ""),
+           "created_by": user.get("name") or "", "created_by_id": user["id"], "created_by_role": user["role"],
+           "created_at": now, "updated_at": now, "thread": thread,
+           "due_at": (now + timedelta(hours=data.deadline_hours)) if data.kind == "written_inquiry" else None,
+           "unread_staff": data.kind != "written_inquiry", "unread_employee": data.kind == "written_inquiry"}
+    await db.requests.insert_one(dict(doc))
+    return {"id": doc["id"], "ref": doc["ref"]}
+
+
+@api.get("/requests")
+async def list_requests(status: Optional[str] = None, kind: Optional[str] = None, user=Depends(current_user)):
+    if user["role"] == "owner":
+        return []
+    if _is_staff(user) and user["role"] != "admin" and not (await perms_for(user)).get("handle_requests"):
+        return []
+    q: dict = {}
+    if user["role"] == "employee":
+        if not user.get("employee_id"):
+            return []
+        q["employee_id"] = user["employee_id"]
+    if status:
+        q["status"] = status
+    if kind:
+        q["kind"] = kind
+    items = await db.requests.find(q, {"_id": 0}).sort("updated_at", -1).to_list(500)
+    return [_req_summary(r, user) for r in items if await _can_see_request(r, user)]
+
+
+@api.get("/requests/summary")
+async def requests_summary(user=Depends(current_user)):
+    if user["role"] == "owner":
+        return {"requests": 0, "chat": 0, "announcements": 0, "total": 0}
+    items = await db.requests.find({}, {"_id": 0}).to_list(2000)
+    visible = [r for r in items if await _can_see_request(r, user)]
+    if _is_staff(user) and user["role"] != "admin" and not (await perms_for(user)).get("handle_requests"):
+        visible = []
+    reqs = sum(1 for r in visible if (r.get("unread_staff") if _is_staff(user) else r.get("unread_employee")))
+    chats = await db.chats.find({f"unread.{user['id']}": {"$gt": 0}}, {"_id": 0, "unread": 1}).to_list(500)
+    chat_n = sum(int((c.get("unread") or {}).get(user["id"], 0)) for c in chats)
+    anns = await db.announcements.find({}, {"_id": 0, "audience": 1, "employee_ids": 1, "read_by": 1}).to_list(300)
+    ann_n = sum(1 for a in anns if visible_to(a, user) and user["id"] not in (a.get("read_by") or []))
+    return {"requests": reqs, "chat": chat_n, "announcements": ann_n, "total": reqs + chat_n}
+
+
+@api.get("/requests/{rid}")
+async def get_request(rid: str, user=Depends(current_user)):
+    r = await db.requests.find_one({"id": rid}, {"_id": 0})
+    if not r or not await _can_see_request(r, user):
+        raise HTTPException(404, "الطلب غير موجود")
+    flag = "unread_staff" if _is_staff(user) else "unread_employee"
+    if r.get(flag):
+        await db.requests.update_one({"id": rid}, {"$set": {flag: False}})
+    spec = REQUEST_KINDS[r["kind"]]
+    out = _req_iso(r)
+    out.pop("unread_staff", None)
+    out.pop("unread_employee", None)
+    perms = await perms_for(user)
+    out.update({"kind_label": spec["label"], "status_label": REQUEST_STATUS[r["status"]], "decision_kind": spec["decision"],
+                "can_decide": _is_staff(user) and bool(perms.get("decide_requests")) and r["status"] in ("new", "answered", "approved") and spec["decision"],
+                "can_reply": r["status"] not in ("closed", "withdrawn") and (not _is_staff(user) or bool(perms.get("handle_requests"))),
+                "can_withdraw": user["role"] == "employee" and r["status"] == "new" and r["kind"] != "written_inquiry",
+                "can_close": _is_staff(user) and r["status"] not in ("closed", "withdrawn")})
+    return out
+
+
+@api.post("/requests/{rid}/reply")
+async def reply_request(rid: str, data: ReplyIn, user=Depends(current_user)):
+    r = await db.requests.find_one({"id": rid}, {"_id": 0})
+    if not r or not await _can_see_request(r, user):
+        raise HTTPException(404, "الطلب غير موجود")
+    if r["status"] in ("closed", "withdrawn"):
+        raise HTTPException(400, "الطلب مغلق")
+    staff = _is_staff(user)
+    if staff:
+        await require(user, "handle_requests")
+    now = now_utc()
+    msg = {"id": new_id(), "by_id": user["id"], "by_name": user.get("name") or "", "by_role": user["role"], "text": data.text.strip(), "at": now, "type": "message"}
+    upd = {"updated_at": now, "unread_employee": staff, "unread_staff": not staff}
+    if r["status"] == "new" and (staff != (r["kind"] == "written_inquiry")):
+        upd["status"] = "answered"      # ردّ الطرف المعنيّ على الطلب
+    elif r["kind"] == "written_inquiry" and not staff and r["status"] == "new":
+        upd["status"] = "answered"
+    await db.requests.update_one({"id": rid}, {"$set": upd, "$push": {"thread": msg}})
+    return {"ok": True}
+
+
+@api.post("/requests/{rid}/decide")
+async def decide_request(rid: str, data: DecideIn, user=Depends(staff_only)):
+    r = await db.requests.find_one({"id": rid}, {"_id": 0})
+    if not r or not await _can_see_request(r, user):
+        raise HTTPException(404, "الطلب غير موجود")
+    if data.decision == "closed":
+        pass
+    else:
+        await require(user, "decide_requests")
+        if not REQUEST_KINDS[r["kind"]]["decision"]:
+            raise HTTPException(400, "لا يتطلب هذا النوع قرارًا")
+        if data.decision == "issued" and r["kind"] != "materials":
+            raise HTTPException(400, "الصرف خاص بطلبات المواد")
+        if data.decision == "issued" and r["status"] != "approved":
+            raise HTTPException(400, "يُصرف الطلب بعد الموافقة عليه")
+        if r["status"] in ("closed", "withdrawn", "rejected", "issued"):
+            raise HTTPException(400, "تم البتّ في هذا الطلب")
+    if data.decision == "closed" and r["status"] in ("closed", "withdrawn"):
+        raise HTTPException(400, "الطلب مغلق")
+    now = now_utc()
+    label = {"approved": "الموافقة على الطلب", "rejected": "رفض الطلب", "issued": "تأكيد صرف المواد من المخزن", "closed": "إغلاق الطلب"}[data.decision]
+    msg = {"id": new_id(), "by_id": user["id"], "by_name": user.get("name") or "", "by_role": user["role"],
+           "text": label + (f": {data.note.strip()}" if data.note.strip() else ""), "at": now, "type": "decision"}
+    await db.requests.update_one({"id": rid}, {"$set": {"status": data.decision, "updated_at": now, "unread_employee": True, "unread_staff": False,
+                                                       "decision": {"by": user.get("name") or "", "role": user["role"], "at": now, "note": data.note.strip()}},
+                                              "$push": {"thread": msg}})
+    return {"ok": True}
+
+
+@api.post("/requests/{rid}/withdraw")
+async def withdraw_request(rid: str, user=Depends(current_user)):
+    r = await db.requests.find_one({"id": rid}, {"_id": 0})
+    if not r or user["role"] != "employee" or r.get("employee_id") != user.get("employee_id"):
+        raise HTTPException(404, "الطلب غير موجود")
+    if r["status"] != "new":
+        raise HTTPException(400, "لا يمكن سحب طلب بُتّ فيه")
+    await db.requests.update_one({"id": rid}, {"$set": {"status": "withdrawn", "updated_at": now_utc(), "unread_staff": False}})
+    return {"ok": True}
+
+
+# ------------------------------- المراسلة (عامل ↔ مسؤول الورشة / المسيّر) ---
+class ChatSendIn(BaseModel):
+    to_user_id: str
+    text: str = Field(min_length=1, max_length=2000)
+
+
+async def _chat_allowed(user: dict) -> None:
+    if user["role"] == "owner":
+        raise HTTPException(403, "غير متاح")
+    if user["role"] != "admin" and not (await perms_for(user)).get("use_messages"):
+        raise HTTPException(403, "المراسلة غير مفعّلة لحسابك")
+
+
+async def _contact_row(u: dict) -> dict:
+    return {"user_id": u["id"], "name": u.get("name") or u.get("email", ""), "role": u["role"], "role_label": ROLE_LABEL.get(u["role"], u["role"])}
+
+
+@api.get("/chat/contacts")
+async def chat_contacts(user=Depends(current_user)):
+    await _chat_allowed(user)
+    if user["role"] == "employee":
+        users = await db.users.find({"role": {"$in": ["admin", "inspector"]}}, {"_id": 0}).to_list(100)
+    else:
+        users = await db.users.find({"id": {"$ne": user["id"]}}, {"_id": 0}).to_list(2000)
+    out = []
+    for u in users:
+        if u["id"] == user["id"]:
+            continue
+        if u["role"] == "employee":
+            emp = await db.employees.find_one({"id": u.get("employee_id")}, {"_id": 0, "status": 1, "position_id": 1})
+            if not emp or emp.get("status") != "active":
+                continue
+        row = await _contact_row(u)
+        if u["role"] == "employee":
+            pos = await db.positions.find_one({"id": emp.get("position_id")}, {"_id": 0, "name": 1}) or {}
+            row["position_name"] = pos.get("name", "")
+        out.append(row)
+    out.sort(key=lambda r: (r["role"] == "employee", r["name"]))
+    return out
+
+
+async def _pair(a: dict, b_id: str) -> Optional[dict]:
+    ids = sorted([a["id"], b_id])
+    return await db.chats.find_one({"pair": ids}, {"_id": 0})
+
+
+@api.post("/chat/send")
+async def chat_send(data: ChatSendIn, user=Depends(current_user)):
+    await _chat_allowed(user)
+    other = await db.users.find_one({"id": data.to_user_id}, {"_id": 0})
+    if not other or other["id"] == user["id"]:
+        raise HTTPException(404, "المستلم غير موجود")
+    if user["role"] == "employee" and other["role"] not in ("admin", "inspector"):
+        raise HTTPException(403, "يمكنك مراسلة مسؤول الورشة أو المسيّر فقط")
+    if other["role"] == "employee":
+        emp = await db.employees.find_one({"id": other.get("employee_id")}, {"_id": 0, "status": 1})
+        if not emp or emp.get("status") != "active":
+            raise HTTPException(404, "المستلم غير موجود")
+    if other["role"] != "admin":
+        # المستلم المراقب/العامل يجب أن تكون المراسلة مفعّلة له
+        if not (await perms_for(other)).get("use_messages"):
+            raise HTTPException(403, "المراسلة غير مفعّلة لدى المستلم")
+    now = now_utc()
+    chat = await _pair(user, other["id"])
+    msg = {"id": new_id(), "from": user["id"], "text": data.text.strip(), "at": now}
+    if not chat:
+        chat = {"id": new_id(), "pair": sorted([user["id"], other["id"]]), "unread": {}, "created_at": now}
+        await db.chats.insert_one(dict(chat))
+    await db.chat_messages.insert_one({**msg, "chat_id": chat["id"]})
+    await db.chats.update_one({"id": chat["id"]}, {"$set": {"last_at": now, "last_text": msg["text"][:90], "last_from": user["id"],
+                                                          f"names.{user['id']}": user.get("name") or "", f"names.{other['id']}": other.get("name") or "",
+                                                          f"roles.{user['id']}": user["role"], f"roles.{other['id']}": other["role"]},
+                                           "$inc": {f"unread.{other['id']}": 1}})
+    return {"id": msg["id"], "chat_id": chat["id"]}
+
+
+@api.get("/chat")
+async def chat_list(user=Depends(current_user)):
+    await _chat_allowed(user)
+    items = await db.chats.find({"pair": user["id"]}, {"_id": 0}).sort("last_at", -1).to_list(200)
+    out = []
+    for c in items:
+        oid = next(x for x in c["pair"] if x != user["id"])
+        out.append({"id": c["id"], "user_id": oid, "name": (c.get("names") or {}).get(oid, ""), "role": (c.get("roles") or {}).get(oid, ""),
+                    "role_label": ROLE_LABEL.get((c.get("roles") or {}).get(oid, ""), ""), "last_text": c.get("last_text", ""),
+                    "last_at": c["last_at"].replace(tzinfo=timezone.utc).isoformat() if c.get("last_at") and c["last_at"].tzinfo is None else (c["last_at"].isoformat() if c.get("last_at") else None),
+                    "mine": c.get("last_from") == user["id"], "unread": int((c.get("unread") or {}).get(user["id"], 0))})
+    return out
+
+
+@api.get("/chat/with/{other_id}")
+async def chat_with(other_id: str, user=Depends(current_user)):
+    await _chat_allowed(user)
+    other = await db.users.find_one({"id": other_id}, {"_id": 0})
+    if not other:
+        raise HTTPException(404, "المستخدم غير موجود")
+    chat = await _pair(user, other_id)
+    msgs = []
+    if chat:
+        rows = await db.chat_messages.find({"chat_id": chat["id"]}, {"_id": 0}).sort("at", -1).to_list(200)
+        rows.reverse()
+        msgs = [{"id": m["id"], "mine": m["from"] == user["id"], "text": m["text"],
+                 "at": (m["at"].replace(tzinfo=timezone.utc) if m["at"].tzinfo is None else m["at"]).isoformat()} for m in rows]
+        await db.chats.update_one({"id": chat["id"]}, {"$set": {f"unread.{user['id']}": 0}})
+    return {"other": await _contact_row(other), "messages": msgs}
 
 
 # ------------------------------- Hub (المسؤول العام) ----------------------

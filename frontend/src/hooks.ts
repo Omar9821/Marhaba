@@ -1,7 +1,7 @@
 import { useFocusEffect } from "expo-router";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import { getCached } from "@/src/api";
+import { api, getCached } from "@/src/api";
 
 export function useApi<T = any>(path: string | null) {
   const [data, setData] = useState<T | undefined>(undefined);
@@ -36,4 +36,18 @@ export function useApi<T = any>(path: string | null) {
   );
 
   return { data, setData, loading: loading && data === undefined, error, offline, refreshing, refresh: () => load(true), reload: load };
+}
+
+/** عدّاد الرسائل والطلبات غير المقروءة (يُحدَّث كل 30 ثانية). */
+export function useInboxSummary(enabled: boolean) {
+  const [s, setS] = useState<{ requests: number; chat: number; announcements: number; total: number }>({ requests: 0, chat: 0, announcements: 0, total: 0 });
+  useEffect(() => {
+    if (!enabled) return;
+    let alive = true;
+    const tick = () => api.get("/requests/summary").then((r) => alive && setS(r)).catch(() => {});
+    tick();
+    const t = setInterval(tick, 30000);
+    return () => { alive = false; clearInterval(t); };
+  }, [enabled]);
+  return s;
 }

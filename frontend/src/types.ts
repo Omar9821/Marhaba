@@ -79,3 +79,21 @@ export type BranchStat = {
   violations: number; losses: number; inspections: number;
 };
 export type HubOverview = { month: string; branches: BranchStat[]; totals: { employees: number; turnover: number; payable: number; gap: number; violations: number; losses: number; avg_q: number | null } };
+
+// ---- الطلبات والمراسلة ----
+export type RequestKind = "complaint" | "leave_exit" | "absence_excuse" | "materials" | "question" | "written_inquiry";
+export type RequestStatus = "new" | "answered" | "approved" | "rejected" | "issued" | "closed" | "withdrawn";
+export type RequestSummary = {
+  id: string; ref: string; kind: RequestKind; kind_label: string; to: "supervisor" | "manager"; subject: string; status: RequestStatus; status_label: string;
+  employee_id: string; employee_name: string; position_name: string; created_at: string; updated_at: string; due_at: string | null;
+  created_by: string; overdue: boolean; unread: boolean; replies: number; last_text: string;
+};
+export type RequestMsg = { id: string; by_id: string; by_name: string; by_role: string; text: string; at: string; type: "message" | "decision" };
+export type RequestDetail = RequestSummary & {
+  fields: Record<string, any>; thread: RequestMsg[]; decision_kind: boolean;
+  can_decide: boolean; can_reply: boolean; can_withdraw: boolean; can_close: boolean;
+};
+export type Contact = { user_id: string; name: string; role: string; role_label: string; position_name?: string };
+export type ChatItem = { id: string; user_id: string; name: string; role: string; role_label: string; last_text: string; last_at: string | null; mine: boolean; unread: number };
+export type ChatMsg = { id: string; mine: boolean; text: string; at: string };
+export type InboxSummary = { requests: number; chat: number; announcements: number; total: number };
