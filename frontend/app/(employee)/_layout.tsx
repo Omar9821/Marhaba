@@ -3,6 +3,8 @@ import { Tabs } from "expo-router";
 import { NativeTabs } from "expo-router/unstable-native-tabs";
 import { Platform } from "react-native";
 
+import { useAuth } from "@/src/auth";
+import { useInboxSummary } from "@/src/hooks";
 import { usesNativeTabs } from "@/src/navigation";
 import { useTheme } from "@/src/theme";
 import { F } from "@/src/ui";
@@ -11,12 +13,18 @@ export const unstable_settings = { initialRouteName: "me" };
 
 export default function EmployeeTabs() {
   const { colors } = useTheme();
+  const { user } = useAuth();
+  const badge = useInboxSummary(!!user);
   if (usesNativeTabs) {
     return (
       <NativeTabs tintColor={colors.brandPrimary}>
         <NativeTabs.Trigger name="account">
           <NativeTabs.Trigger.Icon sf="person.crop.circle" />
           <NativeTabs.Trigger.Label>حسابي</NativeTabs.Trigger.Label>
+        </NativeTabs.Trigger>
+        <NativeTabs.Trigger name="mailbox">
+          <NativeTabs.Trigger.Icon sf="tray.fill" />
+          <NativeTabs.Trigger.Label>الطلبات</NativeTabs.Trigger.Label>
         </NativeTabs.Trigger>
         <NativeTabs.Trigger name="notices">
           <NativeTabs.Trigger.Icon sf="megaphone.fill" />
@@ -49,6 +57,7 @@ export default function EmployeeTabs() {
       }}
     >
       <Tabs.Screen name="account" options={{ title: "حسابي", tabBarIcon: icon("person-circle-outline"), tabBarButtonTestID: "tab-account" } as any} />
+      <Tabs.Screen name="mailbox" options={{ title: "الطلبات", tabBarBadge: badge.total > 0 ? badge.total : undefined, tabBarIcon: icon("file-tray-full-outline"), tabBarButtonTestID: "tab-mailbox" } as any} />
       <Tabs.Screen name="notices" options={{ title: "الإعلانات", tabBarIcon: icon("megaphone-outline"), tabBarButtonTestID: "tab-announcements" } as any} />
       <Tabs.Screen name="infractions" options={{ title: "المخالفات", tabBarIcon: icon("warning-outline"), tabBarButtonTestID: "tab-infractions" } as any} />
       <Tabs.Screen name="me" options={{ title: "أدائي", tabBarIcon: icon("bar-chart-outline"), tabBarButtonTestID: "tab-performance" } as any} />

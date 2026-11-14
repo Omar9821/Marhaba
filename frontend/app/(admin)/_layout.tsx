@@ -5,6 +5,7 @@ import { NativeTabs } from "expo-router/unstable-native-tabs";
 import { Platform } from "react-native";
 
 import { useAuth } from "@/src/auth";
+import { useInboxSummary } from "@/src/hooks";
 import { usesNativeTabs } from "@/src/navigation";
 import { useTheme } from "@/src/theme";
 import { F } from "@/src/ui";
@@ -20,6 +21,8 @@ export default function AdminTabs() {
   // قبل تحميل المستخدم تبقى كل الصفحات متاحة (حتى لا يضيع الرابط المباشر)، ثم تُخفى حسب الصلاحيات
   const known = !!user;
   const showAnn = !known || isAdmin || !!perms.view_announcements || !!perms.send_announcements;
+  const showInbox = !known || isAdmin || !!perms.handle_requests || !!perms.use_messages;
+  const badge = useInboxSummary(known && user?.role !== "owner");
   const showVio = isAdmin || perms.view_violations !== false;
   const showSheet = isAdmin || perms.view_sheet !== false;
   useEffect(() => { refreshUser().catch(() => {}); }, []); // eslint-disable-line react-hooks/exhaustive-deps — يجلب الصلاحيات الحديثة عند الفتح
@@ -37,6 +40,10 @@ export default function AdminTabs() {
         <NativeTabs.Trigger name="entry" hidden>
           <NativeTabs.Trigger.Icon sf="square.and.pencil" />
           <NativeTabs.Trigger.Label>الإدخال</NativeTabs.Trigger.Label>
+        </NativeTabs.Trigger>
+        <NativeTabs.Trigger name="inbox" hidden={!showInbox}>
+          <NativeTabs.Trigger.Icon sf="tray.fill" />
+          <NativeTabs.Trigger.Label>الطلبات</NativeTabs.Trigger.Label>
         </NativeTabs.Trigger>
         <NativeTabs.Trigger name="announcements" hidden={!showAnn}>
           <NativeTabs.Trigger.Icon sf="megaphone.fill" />
@@ -75,6 +82,7 @@ export default function AdminTabs() {
       <Tabs.Screen name="settings" options={{ title: "الإعدادات", tabBarIcon: icon("settings-outline"), tabBarButtonTestID: "tab-settings" } as any} />
       <Tabs.Screen name="reports" options={{ href: null, title: "التقارير" } as any} />
       <Tabs.Screen name="entry" options={{ href: null, title: "الإدخال" } as any} />
+      <Tabs.Screen name="inbox" options={{ href: showInbox ? undefined : null, title: "الطلبات", tabBarBadge: badge.total > 0 ? badge.total : undefined, tabBarIcon: icon("file-tray-full-outline"), tabBarButtonTestID: "tab-inbox" } as any} />
       <Tabs.Screen name="announcements" options={{ href: showAnn ? undefined : null, title: "الإعلانات", tabBarIcon: icon("megaphone-outline"), tabBarButtonTestID: "tab-announcements" } as any} />
       <Tabs.Screen name="violations" options={{ href: showVio ? undefined : null, title: "المخالفات", tabBarIcon: icon("warning-outline"), tabBarButtonTestID: "tab-violations" } as any} />
       <Tabs.Screen name="sheet" options={{ href: showSheet ? undefined : null, title: "الأداء", tabBarIcon: icon("grid-outline"), tabBarButtonTestID: "tab-sheet" } as any} />
