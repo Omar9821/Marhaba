@@ -1,0 +1,12 @@
+# SITE_ADDRESS: اسم النطاق (مثل app.example.dz) لتفعيل HTTPS تلقائيًا، أو :80 للشبكة الداخلية بلا شهادة.
+{$SITE_ADDRESS} {
+	encode gzip
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

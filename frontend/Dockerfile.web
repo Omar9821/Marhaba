@@ -1,0 +1,14 @@
+# بناء واجهة الويب ثم تقديمها عبر Caddy (يتولى HTTPS تلقائيًا إن كان للنطاق اسم عام)
+FROM node:20-bookworm-slim AS build
+WORKDIR /app
+COPY frontend/ .
+# نفس العنوان للواجهة والخادم: https://النطاق/api
+ARG EXPO_PUBLIC_BACKEND_URL
+ENV EXPO_PUBLIC_BACKEND_URL=$EXPO_PUBLIC_BACKEND_URL NODE_OPTIONS=--max-old-space-size=3072
+RUN yarn install --ignore-scripts --ignore-engines \
+ && npx expo export --platform web --output-dir dist \
+ && cp dist/index.html dist/404.html
+
+FROM caddy:2-alpine
+COPY --from=build /app/dist /srv
+COPY deploy/Caddyfile /etc/caddy/Caddyfile
