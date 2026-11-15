@@ -34,9 +34,9 @@ export default function MyPerformance() {
         <ScrollView contentContainerStyle={{ padding: S.lg, gap: S.lg, paddingBottom: (usesNativeTabs ? insets.bottom : 0) + S.xl }} refreshControl={<RefreshControl refreshing={q.refreshing} onRefresh={q.refresh} tintColor={colors.brandPrimary} />}>
           <MonthSwitcher month={month} onChange={setMonth} />
           <Card style={{ gap: S.sm }} testID="bonus-hero-card">
-            <T variant="label">المنحة المستحقة — {typeLabel(q.data?.params.commission_types, r.perf_type)}</T>
-            <T testID="final-bonus-value" variant="num">{r.t === null ? "—" : money(r.t)}</T>
-            <Row2 label="نتيجة الأداء" value={pct(r.q)} />
+            <T variant="label">{r.t === null ? "نتيجة الأداء" : "المنحة المستحقة"} — {typeLabel(q.data?.params.commission_types, r.perf_type)}</T>
+            <T testID="final-bonus-value" variant="num">{r.t === null ? pct(r.q) : money(r.t)}</T>
+            {r.t === null ? null : <Row2 label="نتيجة الأداء" value={pct(r.q)} />}
             <ProgressBar value={r.q ?? 0} />
             <Pill label={r.status || "—"} tone={r.status === "✔" ? "success" : "warning"} />
           </Card>
@@ -48,8 +48,8 @@ export default function MyPerformance() {
             <LineItem label="التأخرات والغيابات" value={r.days === null ? "—" : `${num(r.days)} يوم (معامل ${r.i === null ? "—" : num(r.i, 3)})`} />
             <LineItem label="مضاعف الأداء" value={pct(r.r)} />
             {r.base !== null ? <LineItem label={typeBaseLabel(typeOf(q.data?.params.commission_types, r.perf_type))} value={num(r.base)} /> : null}
-            <LineItem label="المنحة القصوى" value={r.s === null ? "—" : money(r.s)} />
-            <LineItem label="المنحة المستحقة" value={r.t === null ? "—" : money(r.t)} strong />
+            {r.t === null ? null : <LineItem label="المنحة القصوى" value={r.s === null ? "—" : money(r.s)} />}
+            {r.t === null ? null : <LineItem label="المنحة المستحقة" value={money(r.t)} strong />}
             <LineItem label="مخالفات الشهر" value={String(r.violations)} tone={r.violations ? "error" : "muted"} />
           </Card>
           {hist.data?.months?.length ? (

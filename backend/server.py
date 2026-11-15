@@ -198,6 +198,7 @@ class EmployeeIn(BaseModel):
     post_weight: Optional[float] = Field(default=None, ge=0)
     supervisor: bool = False                      # صلاحية «مراقب» يمنحها المسير لمسؤول فريق
     supervise_employees: Optional[List[str]] = None  # العمال التابعون له (يحدّدهم المسير بالاسم)
+    show_bonus_amount: Optional[bool] = None         # إظهار مبلغ المنحة بالدينار للموظف نفسه (الافتراضي: النسب فقط)
 
 
 class InfractionTypeIn(BaseModel):
@@ -586,7 +587,8 @@ def employee_out(e: dict, positions: dict) -> dict:
             "position_id": e["position_id"], "position_name": positions.get(e["position_id"], {}).get("name", "—"),
             "hire_date": e.get("hire_date", ""), "base_salary": float(dec(e.get("base_salary_enc")) or 0),
             "status": e.get("status", "active"), "perf_type": e.get("perf_type", "pool"), "post_weight": e.get("post_weight"),
-            "supervisor": bool(e.get("supervisor")), "supervise_employees": e.get("supervise_employees") or []}
+            "supervisor": bool(e.get("supervisor")), "supervise_employees": e.get("supervise_employees") or [],
+            "show_bonus_amount": bool(e.get("show_bonus_amount"))}
 
 
 async def positions_map() -> dict:
@@ -670,7 +672,7 @@ async def create_employee(data: EmployeeIn, _=Depends(admin_only)):
     doc = {"id": eid, "full_name": data.full_name, "phone_enc": enc(data.phone), "email": (data.email or "").strip().lower() or None,
            "position_id": data.position_id, "hire_date": data.hire_date, "base_salary_enc": enc(data.base_salary),
            "status": data.status, "perf_type": data.perf_type, "post_weight": data.post_weight, "created_at": now_utc(),
-           "supervisor": data.supervisor, "supervise_employees": scope}
+           "supervisor": data.supervisor, "supervise_employees": scope, "show_bonus_amount": bool(data.show_bonus_amount)}
     await db.employees.insert_one(dict(doc))
     return employee_out(doc, await positions_map())
 
@@ -684,8 +686,10 @@ async def update_employee(eid: str, data: EmployeeIn, _=Depends(admin_only)):
     upd = {"full_name": data.full_name, "phone_enc": enc(data.phone), "email": (data.email or "").strip().lower() or None,
            "position_id": data.position_id, "hire_date": data.hire_date, "base_salary_enc": enc(data.base_salary), "status": data.status,
            "perf_type": data.perf_type, "post_weight": data.post_weight, "supervisor": data.supervisor, "supervise_employees": scope}
+    if data.show_bonus_amount is not None:
+        upd["show_bonus_amount"] = data.show_bonus_amount
     await db.employees.update_one({"id": eid}, {"$set": upd})
-    return employee_out({"id": eid, **upd}, await positions_map())
+    return employee_out(await db.employees.find_one({"id": eid}, {"_id": 0}), await positions_map())
 
 
 @api.delete("/employees/{eid}")
@@ -1152,6 +1156,16 @@ async def put_violation_entry(data: ViolationEntryIn, user=Depends(staff_only)):
     return {"ok": True, "counts": counts}
 
 
+async def own_amount_visible(user: dict) -> bool:
+    """هل يرى صاحب الحساب مبلغ منحته بالدينار؟ الافتراضي: لا (النسب فقط) إلا إذا أظهره المسيّر لهذا الموظف."""
+    emp = await db.employees.find_one({"id": user.get("employee_id")}, {"_id": 0, "show_bonus_amount": 1}) or {}
+    if not emp.get("show_bonus_amount"):
+        return False
+    if user["role"] == "employee":
+        return bool((await perms_for(user)).get("view_amounts"))
+    return True
+
+
 @api.get("/me/sheet")
 async def my_sheet(month: Optional[str] = None, user=Depends(current_user)):
     if not user.get("employee_id"):
@@ -1162,17 +1176,18 @@ async def my_sheet(month: Optional[str] = None, user=Depends(current_user)):
     if not row:
         raise HTTPException(404, "الموظف غير موجود")
     perms = await perms_for(user)
+    amount_hidden = not await own_amount_visible(user)
+    if amount_hidden:
+        for k in ("s", "t", "u"):
+            row[k] = None
     if user["role"] == "employee":
-        if not perms.get("view_amounts"):
-            for k in ("s", "t", "u"):
-                row[k] = None
         if not perms.get("view_base"):
             row["base"] = None
         if not perms.get("view_violations"):
             row["hits"] = None
     params = res["params"]
     params.pop("violation_types", None)
-    return {"month": month, "row": row, "params": params, "perms": perms}
+    return {"month": month, "row": row, "params": params, "perms": perms, "amount_hidden": amount_hidden}
 
 
 @api.get("/me/history")
@@ -1181,6 +1196,7 @@ async def my_history(months: int = 6, user=Depends(current_user)):
     if not user.get("employee_id"):
         raise HTTPException(404, "حسابك غير مرتبط بملف موظف بعد")
     months = max(1, min(int(months), 12))
+    show_amount = await own_amount_visible(user)
     y, m = map(int, current_month().split("-"))
     out = []
     for i in range(months):
@@ -1191,7 +1207,7 @@ async def my_history(months: int = 6, user=Depends(current_user)):
         res = await build_sheet(month, only_employee=user["employee_id"])
         row = next((r for r in res["rows"] if r["id"] == user["employee_id"]), None)
         if row:
-            out.append({"month": month, "q": row["q"], "t": row["t"] if (user["role"] != "employee" or (await perms_for(user)).get("view_amounts")) else None,
+            out.append({"month": month, "q": row["q"], "t": row["t"] if show_amount else None,
                         "violations": row["violations"], "losses": row["losses"]})
     return {"months": out}
 
