@@ -226,3 +226,23 @@ def test_team_supervisor_scope(c, H):
     L2 = login(c, "lead.a@company.dz", "Lead#12345")
     assert c.get("/api/auth/me", headers=L2).json()["role"] == "employee"
     assert c.get("/api/employees", headers=L2).status_code == 403
+
+
+def test_bonus_amount_hidden_by_default(c, H):
+    """الموظف يرى النسب فقط افتراضيًا؛ والمسير يُظهر المبلغ لموظف بعينه أو يخفيه."""
+    me = c.get("/api/auth/me", headers=H["emp"]).json()
+    eid = me["employee_id"]
+    emp = next(e for e in c.get("/api/employees", headers=H["adm"]).json() if e["id"] == eid)
+    assert emp["show_bonus_amount"] is False
+    body = {"full_name": emp["full_name"], "position_id": emp["position_id"], "email": emp["email"], "perf_type": emp["perf_type"]}
+    r = c.get("/api/me/sheet", headers=H["emp"]).json()
+    assert r["amount_hidden"] is True and all(r["row"][k] is None for k in ("s", "t", "u")) and r["row"]["q"] is not None
+    assert all(m["t"] is None for m in c.get("/api/me/history", headers=H["emp"]).json()["months"])
+    # الحفظ دون الحقل لا يغيّر الإعداد؛ وإظهاره لهذا الموظف فقط
+    assert c.put(f"/api/employees/{eid}", json={**body, "show_bonus_amount": True}, headers=H["adm"]).json()["show_bonus_amount"] is True
+    assert c.put(f"/api/employees/{eid}", json=body, headers=H["adm"]).json()["show_bonus_amount"] is True
+    r = c.get("/api/me/sheet", headers=H["emp"]).json()
+    assert r["amount_hidden"] is False and r["row"]["t"] is not None
+    # إخفاؤه من جديد
+    assert c.put(f"/api/employees/{eid}", json={**body, "show_bonus_amount": False}, headers=H["adm"]).json()["show_bonus_amount"] is False
+    assert c.get("/api/me/sheet", headers=H["emp"]).json()["row"]["t"] is None
