@@ -1116,6 +1116,7 @@ class BonusInputsIn(BaseModel):
     breakage: float = Field(default=0, ge=0)                       # قيمة الكسر والخسائر بسعر الشراء
     offcut_revenue: float = Field(default=0, ge=0)                 # عائد بيع بقايا الزجاج أو السلع المصنوعة منها
     collected: dict[str, float] = {}                               # employee_id -> ما حُصّل كاملًا من طلبياته
+    m2_by_emp: dict[str, float] = {}                               # employee_id -> أمتار مقطوعة لكل عون تقطيع/مسؤول
 
 
 class BonusRolesIn(BaseModel):
@@ -1162,10 +1163,13 @@ async def bonus_month_result(month: str) -> dict:
         m = await db.sheet_months.find_one({"month": month}, {"_id": 0})
         inp["turnover"] = (m or {}).get("turnover") or 0
     sh = await build_sheet(month)
+    sp = sh["params"]
     qmap = {r["id"]: r["q"] for r in sh["rows"]}
+    wmap = {"c": sp["w_hygiene"], "e": sp["w_respect"], "g": sp["w_loss"], "i": sp["w_days"]}
+    smap = {r["id"]: {"g": r["g"], "wsum": sum(w for k, w in wmap.items() if r[k] is not None)} for r in sh["rows"]}
     emps = await db.employees.find({"status": "active"}, {"_id": 0}).sort("created_at", 1).to_list(2000)
     staff = [{"id": e["id"], "name": e["full_name"], "role": e["bonus_role"], "weight": e.get("post_weight") or 1,
-              "q": qmap.get(e["id"])} for e in emps if e.get("bonus_role") in bonus_v2.ROLES]
+              "q": qmap.get(e["id"]), "s": smap.get(e["id"], {})} for e in emps if e.get("bonus_role") in bonus_v2.ROLES]
     res = bonus_v2.compute(params, inp, staff)
     res["month"], res["inputs"] = month, inp
     res["unassigned"] = [e["full_name"] for e in emps if e.get("bonus_role") not in bonus_v2.ROLES]

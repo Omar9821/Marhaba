@@ -14,7 +14,6 @@ const ROLES: [string, string][] = [["commercial", "عون تجاري"], ["worksh
 const ROLE_LABEL = Object.fromEntries(ROLES);
 const INPUTS: [string, string][] = [
   ["turnover", "رقم الأعمال المحصَّل (دج) — اتركه فارغًا لأخذه من جدول الأداء"],
-  ["m2_cut", "الأمتار المربعة المقطوعة (م²)"],
   ["glass_consumed", "قيمة الزجاج المستهلك بسعر الشراء (دج) = المبيع + الكسر"],
   ["breakage", "قيمة الكسر والخسائر بسعر الشراء (دج)"],
   ["offcut_revenue", "عائد بيع البقايا أو السلع المصنوعة منها (دج)"],
@@ -29,6 +28,7 @@ export default function BonusMonthScreen() {
   const emps = useApi<any[]>("/employees");
   const [f, setF] = useState<Record<string, string>>({});
   const [col, setCol] = useState<Record<string, string>>({});
+  const [m2, setM2] = useState<Record<string, string>>({});
   const [roles, setRoles] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
@@ -39,6 +39,7 @@ export default function BonusMonthScreen() {
     INPUTS.forEach(([k]) => { m[k] = i[k] ? String(i[k]) : ""; });
     setF(m);
     setCol(Object.fromEntries(Object.entries(i.collected || {}).map(([k, v]) => [k, String(v)])));
+    setM2(Object.fromEntries(Object.entries(i.m2_by_emp || {}).map(([k, v]) => [k, String(v)])));
   }, [res.data]);
   useEffect(() => { if (emps.data) setRoles(Object.fromEntries(emps.data.map((e) => [e.id, e.bonus_role || ""]))); }, [emps.data]);
 
@@ -46,9 +47,10 @@ export default function BonusMonthScreen() {
     setSaving(true);
     try {
       await api.put("/bonus/roles", { roles });
-      const body: any = { month, collected: {} };
+      const body: any = { month, collected: {}, m2_by_emp: {} };
       INPUTS.forEach(([k]) => { const v = parseNum(f[k] ?? ""); body[k] = v === null ? (k === "turnover" ? null : 0) : v; });
       Object.entries(col).forEach(([id, v]) => { const n = parseNum(v); if (n) body.collected[id] = n; });
+      Object.entries(m2).forEach(([id, v]) => { const n = parseNum(v); if (n) body.m2_by_emp[id] = n; });
       await api.put("/bonus/inputs", body);
       toast("تم الحفظ وإعادة الحساب");
       res.reload?.();
@@ -88,13 +90,16 @@ export default function BonusMonthScreen() {
                   {roles[e.id] === "commercial" && (
                     <Field label="المحصَّل كاملًا هذا الشهر (دج)" value={col[e.id] ?? ""} onChangeText={(v) => setCol((s) => ({ ...s, [e.id]: v }))} keyboardType="decimal-pad" />
                   )}
+                  {(roles[e.id] === "cutter" || roles[e.id] === "cutting_head") && (
+                    <Field label="الأمتار التي قطعها هذا الشهر (م²) — تُحسب فوق 1500 فقط" value={m2[e.id] ?? ""} onChangeText={(v) => setM2((s) => ({ ...s, [e.id]: v }))} keyboardType="decimal-pad" />
+                  )}
                 </View>
               ))}
             </Card>
             {r && (
               <Card style={{ gap: S.sm }}>
                 <T variant="h3">النتيجة</T>
-                <T>نسبة الهدر: {(r.waste_ratio * 100).toFixed(2)}% — معامل المنحة: {(r.waste_factor * 100).toFixed(0)}%</T>
+                <T>نسبة الهدر: {(r.waste_ratio * 100).toFixed(2)}% — أثره على معيار الخسائر لمسؤولي الورشة والتقطيع: {(r.waste_factor * 100).toFixed(0)}%</T>
                 <T>{r.reward_paid ? `مكافأة الهدر المباع مُسلَّمة (حصة الشركة ${money(r.reward_company)})` : "مكافأة الهدر المباع غير مُسلَّمة"}</T>
                 {r.rows.map((x: any) => (
                   <T key={x.id}>{x.name} — {ROLE_LABEL[x.role]}: {money(x.payable)} (من أصل {money(x.bonus_max)})</T>
