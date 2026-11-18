@@ -25,7 +25,7 @@ def staff():
     return [{"id": "a", "role": "commercial", "q": 1},
             {"id": "w", "role": "workshop_head", "q": 1, "s": s},
             {"id": "c", "role": "cutting_head", "q": 1, "s": s},
-            {"id": "k", "role": "cutter", "q": 1},
+            {"id": "k", "role": "cutter", "q": 1, "s": s},
             {"id": "t1", "role": "team", "weight": 1, "q": 1}, {"id": "t2", "role": "team", "weight": 3, "q": 0}]
 
 
@@ -54,4 +54,4 @@ def test_waste_hits_only_loss_points():
     assert abs(d["w"]["payable"] - 20_000 * 0.92) < 1e-6
     r, d = run(900_000)                                            # 9% → معيار الخسائر صفر → q=0.6
     assert abs(d["w"]["payable"] - 20_000 * (0.6 + 0.4 * 0.6)) < 1e-6
-    assert d["k"]["payable"] == 10_000                            # عون التقطيع غير متأثر بنسبة الهدر
+    assert abs(d["k"]["payable"] - 10_000 * (0.6 + 0.4 * 0.6)) < 1e-6   # عون التقطيع يتأثر مثل مسؤول الورشة

@@ -95,8 +95,7 @@ def compute(params, inp, staff):
             if m2 is None and role == "cutting_head":
                 m2 = inp.get("m2_cut")
             ref = max(0.0, float(m2 or 0) - p["cut_m2_threshold"]) * p["cut_price_m2"]
-            if role == "cutting_head":
-                q = adjusted_q(q, s.get("s") or {}, g, p)
+            q = adjusted_q(q, s.get("s") or {}, g, p)
         elif role == "team" and tw > 0:
             ref = pool * float(s.get("weight") or 0) / tw
         rw = 0.0
