@@ -6,12 +6,11 @@ import bonus_v2 as b
 P = b.merge({})
 
 
-def test_agent_only_excess_over_threshold():
-    assert b.agent_bonus(7_000_000, P) == 0
-    assert b.agent_bonus(7_500_000, P) == 0
-    assert round(b.agent_bonus(12_500_000, P)) == 10_000          # 0.2% × 5م
-    assert round(b.agent_bonus(20_000_000, P)) == 25_000          # 0.2% × 12.5م
-    assert round(b.agent_bonus(30_000_000, P)) == 55_000          # + 0.3% × 10م
+def test_agent_net_excess_tiers():
+    assert b.agent_bonus(0, P) == 0
+    assert round(b.agent_bonus(5_000_000, P)) == 10_000
+    assert round(b.agent_bonus(20_000_000, P)) == 40_000          # 0.2% × 20م
+    assert round(b.agent_bonus(22_500_000, P)) == 47_500          # + 0.3% × 2.5م (محصَّل 30 م)
 
 
 def test_waste_factor():
@@ -30,8 +29,8 @@ def staff():
 
 
 def run(breakage, extra=None):
-    inp = {"turnover": 25_000_000, "m2_by_emp": {"c": 2500, "k": 2000}, "glass_consumed": 10_000_000,
-           "breakage": breakage, "offcut_revenue": 100_000, "collected": {"a": 20_000_000}, **(extra or {})}
+    inp = {"turnover_excess": 10_000_000, "m2_by_emp": {"c": 1000, "k": 500}, "glass_consumed": 10_000_000,
+           "breakage": breakage, "offcut_revenue": 100_000, "collected": {"a": 12_500_000}, **(extra or {})}
     r = b.compute({}, inp, staff())
     return r, {x["id"]: x for x in r["rows"]}
 

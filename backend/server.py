@@ -1110,13 +1110,13 @@ class BonusParamsIn(BaseModel):
 
 class BonusInputsIn(BaseModel):
     month: str = Field(pattern=MONTH_RE)
-    turnover: Optional[float] = Field(default=None, ge=0)          # رقم الأعمال المحصَّل؛ إن تُرك فارغًا يؤخذ من جدول الأداء
+    turnover_excess: Optional[float] = Field(default=None, ge=0)   # صافي رقم أعمال الورشة فوق 15 م دج؛ إن تُرك فارغًا يُحسب من رقم أعمال جدول الأداء
     m2_cut: float = Field(default=0, ge=0)                         # الأمتار المربعة المقطوعة في الشهر
     glass_consumed: float = Field(default=0, ge=0)                 # قيمة الزجاج المستهلك بسعر الشراء (المبيع + الكسر)
     breakage: float = Field(default=0, ge=0)                       # قيمة الكسر والخسائر بسعر الشراء
     offcut_revenue: float = Field(default=0, ge=0)                 # عائد بيع بقايا الزجاج أو السلع المصنوعة منها
-    collected: dict[str, float] = {}                               # employee_id -> ما حُصّل كاملًا من طلبياته
-    m2_by_emp: dict[str, float] = {}                               # employee_id -> أمتار مقطوعة لكل عون تقطيع/مسؤول
+    collected: dict[str, float] = {}                               # employee_id -> الصافي المحصَّل كاملًا فوق 7.5 م دج
+    m2_by_emp: dict[str, float] = {}                               # employee_id -> الأمتار المقطوعة فوق 1500 م² (الصافي)
 
 
 class BonusRolesIn(BaseModel):
@@ -1159,7 +1159,7 @@ async def put_bonus_inputs(data: BonusInputsIn, _=Depends(admin_only)):
 async def bonus_month_result(month: str) -> dict:
     params = await bonus_params_doc()
     inp = await db.bonus_inputs.find_one({"month": month}, {"_id": 0}) or {"month": month}
-    if inp.get("turnover") is None:
+    if inp.get("turnover_excess") is None:
         m = await db.sheet_months.find_one({"month": month}, {"_id": 0})
         inp["turnover"] = (m or {}).get("turnover") or 0
     sh = await build_sheet(month)
