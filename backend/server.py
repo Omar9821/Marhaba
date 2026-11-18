@@ -20,6 +20,7 @@ from pymongo import ASCENDING, DESCENDING, IndexModel
 from starlette.middleware.cors import CORSMiddleware
 
 import sheet_engine as sheet
+import bonus_v2
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -586,7 +587,7 @@ def employee_out(e: dict, positions: dict) -> dict:
     return {"id": e["id"], "full_name": e["full_name"], "phone": dec(e.get("phone_enc")), "email": e.get("email"),
             "position_id": e["position_id"], "position_name": positions.get(e["position_id"], {}).get("name", "—"),
             "hire_date": e.get("hire_date", ""), "base_salary": float(dec(e.get("base_salary_enc")) or 0),
-            "status": e.get("status", "active"), "perf_type": e.get("perf_type", "pool"), "post_weight": e.get("post_weight"),
+            "status": e.get("status", "active"), "perf_type": e.get("perf_type", "pool"), "post_weight": e.get("post_weight"), "bonus_role": e.get("bonus_role"),
             "supervisor": bool(e.get("supervisor")), "supervise_employees": e.get("supervise_employees") or [],
             "show_bonus_amount": bool(e.get("show_bonus_amount"))}
 
@@ -1100,6 +1101,80 @@ async def put_sheet_entry(data: SheetEntryIn, user=Depends(staff_only)):
     await db.sheet_entries.update_one({"employee_id": data.employee_id, "month": data.month},
                                       {"$set": {"employee_id": data.employee_id, "month": data.month, "base": base, "updated_at": now_utc()}}, upsert=True)
     return {"ok": True}
+
+
+# ------------------------------- نظام المنح المعتمد (v2) -------------------
+class BonusParamsIn(BaseModel):
+    params: dict[str, float] = {}
+
+
+class BonusInputsIn(BaseModel):
+    month: str = Field(pattern=MONTH_RE)
+    turnover: Optional[float] = Field(default=None, ge=0)          # رقم الأعمال المحصَّل؛ إن تُرك فارغًا يؤخذ من جدول الأداء
+    m2_cut: float = Field(default=0, ge=0)                         # الأمتار المربعة المقطوعة في الشهر
+    glass_consumed: float = Field(default=0, ge=0)                 # قيمة الزجاج المستهلك بسعر الشراء (المبيع + الكسر)
+    breakage: float = Field(default=0, ge=0)                       # قيمة الكسر والخسائر بسعر الشراء
+    offcut_revenue: float = Field(default=0, ge=0)                 # عائد بيع بقايا الزجاج أو السلع المصنوعة منها
+    collected: dict[str, float] = {}                               # employee_id -> ما حُصّل كاملًا من طلبياته
+
+
+class BonusRolesIn(BaseModel):
+    roles: dict[str, str]                                          # employee_id -> دور المنحة
+
+
+async def bonus_params_doc() -> dict:
+    d = await db.settings.find_one({"id": "bonus_params"}, {"_id": 0, "id": 0}) or {}
+    return bonus_v2.merge(d)
+
+
+@api.get("/bonus/params")
+async def get_bonus_params(_=Depends(admin_only)):
+    return await bonus_params_doc()
+
+
+@api.put("/bonus/params")
+async def put_bonus_params(data: BonusParamsIn, _=Depends(admin_only)):
+    clean = {k: float(v) for k, v in data.params.items() if k in bonus_v2.DEFAULTS and v >= 0}
+    await db.settings.update_one({"id": "bonus_params"}, {"$set": {"id": "bonus_params", **clean}}, upsert=True)
+    return await bonus_params_doc()
+
+
+@api.put("/bonus/roles")
+async def put_bonus_roles(data: BonusRolesIn, _=Depends(admin_only)):
+    for eid, role in data.roles.items():
+        if role not in bonus_v2.ROLES and role != "":
+            raise HTTPException(400, "دور غير صالح")
+        await db.employees.update_one({"id": eid}, {"$set": {"bonus_role": role or None}})
+    return {"ok": True}
+
+
+@api.put("/bonus/inputs")
+async def put_bonus_inputs(data: BonusInputsIn, _=Depends(admin_only)):
+    doc = data.model_dump()
+    await db.bonus_inputs.update_one({"month": data.month}, {"$set": {**doc, "updated_at": now_utc()}}, upsert=True)
+    return await bonus_month_result(data.month)
+
+
+async def bonus_month_result(month: str) -> dict:
+    params = await bonus_params_doc()
+    inp = await db.bonus_inputs.find_one({"month": month}, {"_id": 0}) or {"month": month}
+    if inp.get("turnover") is None:
+        m = await db.sheet_months.find_one({"month": month}, {"_id": 0})
+        inp["turnover"] = (m or {}).get("turnover") or 0
+    sh = await build_sheet(month)
+    qmap = {r["id"]: r["q"] for r in sh["rows"]}
+    emps = await db.employees.find({"status": "active"}, {"_id": 0}).sort("created_at", 1).to_list(2000)
+    staff = [{"id": e["id"], "name": e["full_name"], "role": e["bonus_role"], "weight": e.get("post_weight") or 1,
+              "q": qmap.get(e["id"])} for e in emps if e.get("bonus_role") in bonus_v2.ROLES]
+    res = bonus_v2.compute(params, inp, staff)
+    res["month"], res["inputs"] = month, inp
+    res["unassigned"] = [e["full_name"] for e in emps if e.get("bonus_role") not in bonus_v2.ROLES]
+    return res
+
+
+@api.get("/bonus/month")
+async def get_bonus_month(month: Optional[str] = None, _=Depends(admin_only)):
+    return await bonus_month_result(month or current_month())
 
 
 @api.get("/violations-log")

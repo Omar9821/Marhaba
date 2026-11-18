@@ -39,7 +39,8 @@ export default function SettingsCenter() {
         <Card style={{ paddingVertical: S.xs }}>
           <SettingsRow testID="settings-commission-row" icon="cash-outline" title="أنواع العمولة" subtitle="تجاري، مالية، متر مربع، عامل… أو أي نوع جديد" onPress={() => go("/settings/commission-types")} />
           <SettingsRow testID="settings-violation-types-row" icon="warning-outline" title="أنواع المخالفات" subtitle="أضف مخالفة وحدّد أثرها على المنحة" onPress={() => go("/settings/violation-types")} />
-          <SettingsRow testID="settings-sheet-params-row" icon="options-outline" title="معاملات جدول الأداء" subtitle="الأوزان، الحدود، المجمَّع، الصندوق الترفيهي" onPress={() => go("/settings/sheet-params")} last />
+          <SettingsRow testID="settings-sheet-params-row" icon="options-outline" title="معاملات جدول الأداء" subtitle="الأوزان، الحدود، المجمَّع، الصندوق الترفيهي" onPress={() => go("/settings/sheet-params")} />
+          <SettingsRow testID="settings-bonus-month-row" icon="trophy-outline" title="منح الأداء الشهرية (النظام المعتمد)" subtitle="عتبة 7.5 م دج، شرائح 0.2%/0.3%، الهدر، مكافأة البقايا" onPress={() => go("/settings/bonus-month")} last />
         </Card>
         <T variant="label" color="muted">الصلاحيات والخصوصية</T>
         <Card style={{ paddingVertical: S.xs, gap: S.xs }}>
