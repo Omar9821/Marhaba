@@ -13,7 +13,7 @@ import { Btn, Card, Chip, ChipRow, Field, Header, Loading, S, T, useToast } from
 const ROLES: [string, string][] = [["commercial", "عون تجاري"], ["workshop_head", "مسؤول الورشة"], ["cutting_head", "مسؤول التقطيع"], ["cutter", "عون تقطيع"], ["team", "فريق / محصّل"]];
 const ROLE_LABEL = Object.fromEntries(ROLES);
 const INPUTS: [string, string][] = [
-  ["turnover", "رقم الأعمال المحصَّل (دج) — اتركه فارغًا لأخذه من جدول الأداء"],
+  ["turnover_excess", "صافي رقم أعمال الورشة فوق 15,000,000 دج (دج) — بعد خصم العتبة؛ اتركه فارغًا ليُحسب من جدول الأداء"],
   ["glass_consumed", "قيمة الزجاج المستهلك بسعر الشراء (دج) = المبيع + الكسر"],
   ["breakage", "قيمة الكسر والخسائر بسعر الشراء (دج)"],
   ["offcut_revenue", "عائد بيع البقايا أو السلع المصنوعة منها (دج)"],
@@ -48,7 +48,7 @@ export default function BonusMonthScreen() {
     try {
       await api.put("/bonus/roles", { roles });
       const body: any = { month, collected: {}, m2_by_emp: {} };
-      INPUTS.forEach(([k]) => { const v = parseNum(f[k] ?? ""); body[k] = v === null ? (k === "turnover" ? null : 0) : v; });
+      INPUTS.forEach(([k]) => { const v = parseNum(f[k] ?? ""); body[k] = v === null ? (k === "turnover_excess" ? null : 0) : v; });
       Object.entries(col).forEach(([id, v]) => { const n = parseNum(v); if (n) body.collected[id] = n; });
       Object.entries(m2).forEach(([id, v]) => { const n = parseNum(v); if (n) body.m2_by_emp[id] = n; });
       await api.put("/bonus/inputs", body);
@@ -88,10 +88,10 @@ export default function BonusMonthScreen() {
                     ))}
                   </ChipRow>
                   {roles[e.id] === "commercial" && (
-                    <Field label="المحصَّل كاملًا هذا الشهر (دج)" value={col[e.id] ?? ""} onChangeText={(v) => setCol((s) => ({ ...s, [e.id]: v }))} keyboardType="decimal-pad" />
+                    <Field label="صافي المحصَّل كاملًا فوق 7,500,000 دج (بعد خصم العتبة)" value={col[e.id] ?? ""} onChangeText={(v) => setCol((s) => ({ ...s, [e.id]: v }))} keyboardType="decimal-pad" />
                   )}
                   {(roles[e.id] === "cutter" || roles[e.id] === "cutting_head") && (
-                    <Field label="الأمتار التي قطعها هذا الشهر (م²) — تُحسب فوق 1500 فقط" value={m2[e.id] ?? ""} onChangeText={(v) => setM2((s) => ({ ...s, [e.id]: v }))} keyboardType="decimal-pad" />
+                    <Field label="صافي الأمتار فوق 1500 م² هذا الشهر (بعد خصم الحد)" value={m2[e.id] ?? ""} onChangeText={(v) => setM2((s) => ({ ...s, [e.id]: v }))} keyboardType="decimal-pad" />
                   )}
                 </View>
               ))}

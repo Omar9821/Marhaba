@@ -29,11 +29,10 @@ def merge(p):
     return out
 
 
-def agent_bonus(collected, p):
-    """تُحسب فقط على الجزء الذي يفوق العتبة: 0.2% من العتبة إلى سقف الشريحة، و0.3% فوقه."""
-    c = max(0.0, float(collected or 0))
-    t, cap = p["agent_threshold"], p["agent_tier_cap"]
-    return p["agent_rate_1"] * max(0.0, min(c, cap) - t) + p["agent_rate_2"] * max(0.0, c - max(cap, t))
+def agent_bonus(excess, p):
+    """excess = الصافي الذي يدخله المسير: ما حصّله العون فوق 7.5 م دج. 0.2% على أول 20 م منه، و0.3% على ما زاد."""
+    x = max(0.0, float(excess or 0))
+    return p["agent_rate_1"] * min(x, p["agent_tier_cap"]) + p["agent_rate_2"] * max(0.0, x - p["agent_tier_cap"])
 
 
 def waste_ratio(breakage, consumed):
@@ -69,7 +68,10 @@ def compute(params, inp, staff):
     staff: [{id,name,role,weight,q}] — q = نتيجة الأداء 0..1 (None = لم تُقيَّم → تُعامَل كاملة)."""
     p = merge(params)
     turnover = float(inp.get("turnover") or 0)
-    over = max(0.0, turnover - p["turnover_threshold"])
+    if inp.get("turnover_excess") is not None:
+        over = max(0.0, float(inp["turnover_excess"]))          # الصافي فوق 15 م دج كما أدخله المسير
+    else:
+        over = max(0.0, turnover - p["turnover_threshold"])
     w = waste_ratio(inp.get("breakage"), inp.get("glass_consumed"))
     g = waste_factor(w, p)
     reward_ok = w < p["waste_full"] and float(inp.get("offcut_revenue") or 0) > 0
@@ -85,7 +87,7 @@ def compute(params, inp, staff):
         ref = 0.0
         base = None
         if role == "commercial":
-            base = float((inp.get("collected") or {}).get(s["id"]) or 0)
+            base = float((inp.get("collected") or {}).get(s["id"]) or 0)  # الصافي فوق 7.5 م دج
             ref = agent_bonus(base, p)
         elif role == "workshop_head":
             ref = over * p["workshop_rate"]
@@ -94,7 +96,7 @@ def compute(params, inp, staff):
             m2 = (inp.get("m2_by_emp") or {}).get(s["id"])
             if m2 is None and role == "cutting_head":
                 m2 = inp.get("m2_cut")
-            ref = max(0.0, float(m2 or 0) - p["cut_m2_threshold"]) * p["cut_price_m2"]
+            ref = max(0.0, float(m2 or 0)) * p["cut_price_m2"]       # m2 = الأمتار فوق 1500 كما أدخلها المسير
             q = adjusted_q(q, s.get("s") or {}, g, p)
         elif role == "team" and tw > 0:
             ref = pool * float(s.get("weight") or 0) / tw
