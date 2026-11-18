@@ -10,7 +10,7 @@ import { Branch } from "@/src/types";
 import { Btn, Card, Chip, Field, Header, Loading, Pill, Row, S, SwitchRow, T, useToast } from "@/src/ui";
 
 const ACTIVITIES = [
-  { key: "workshop", label: "ورشة / إنتاج" }, { key: "commercial", label: "تجاري" }, { key: "services", label: "خدمات" }, { key: "other", label: "نشاط آخر" },
+  { key: "workshop", label: "ورشة / إنتاج" }, { key: "commercial", label: "تجاري" }, { key: "services", label: "خدمات" }, { key: "mirrors", label: "مرايا الحمام LED" }, { key: "other", label: "نشاط آخر" },
 ];
 
 export default function BranchesScreen() {

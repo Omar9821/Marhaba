@@ -10,7 +10,7 @@ import { useTheme } from "@/src/theme";
 import { BranchStat, HubOverview } from "@/src/types";
 import { Btn, Card, ConfirmSheet, EmptyState, ErrorView, Header, Loading, MonthSwitcher, Pill, ProgressBar, Row, S, StatTile, T } from "@/src/ui";
 
-const ACT: Record<string, string> = { workshop: "ورشة / إنتاج", commercial: "تجاري", services: "خدمات", other: "نشاط آخر" };
+const ACT: Record<string, string> = { workshop: "ورشة / إنتاج", commercial: "تجاري", services: "خدمات", mirrors: "مرايا الحمام LED", other: "نشاط آخر" };
 const pct = (v: number | null) => (v === null || v === undefined ? "—" : `${num(v * 100, 1)}%`);
 
 /** البوابة العامة للمسؤول العام: أداء كل الفروع في نظرة واحدة + الدخول إلى أي فرع + إدارة الفروع. */
