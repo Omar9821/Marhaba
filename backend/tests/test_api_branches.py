@@ -126,3 +126,10 @@ def test_branches(c):
     assert c.post("/api/hub/branches", json={"name": "مكرر", "admin_email": "svc@x.dz", "admin_password": "Secret123"}, headers=owner).status_code == 400
     assert c.put(f"/api/hub/branches/{bid}", json={"active": False}, headers=owner).status_code == 200
     assert c.get("/api/sheet", headers=svc).status_code == 403
+
+
+def test_mirrors_activity_preset():
+    import server
+    a = server.ACTIVITIES["mirrors"]
+    assert any(t["id"] == "piece" and t["unit"] == "قطعة" for t in a["types"])
+    assert [p[0] for p in a["positions"]] == ["مسؤول ورشة المرايا", "عامل تركيب"]

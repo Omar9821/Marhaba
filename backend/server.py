@@ -1844,13 +1844,16 @@ ACTIVITIES = {
     "services": {"label": "خدمات", "types": [
         {"id": "service", "label": "خدمة", "kind": "rate", "rate": 0.01, "share": 0.4, "base_label": "إيرادات الخدمات", "unit": "دج"},
         {"id": "pool", "label": "عامل (مجمَّع)", "kind": "pool"}], "positions": [("فني / مقدّم خدمة", "service", None), ("مساعد", "pool", 1)]},
+    "mirrors": {"label": "مرايا الحمام LED", "types": [
+        {"id": "piece", "label": "قطعة منتجة ومركّبة", "kind": "rate", "rate": 0.0, "share": 0.4, "base_label": "عدد القطع المنتجة والمركّبة", "unit": "قطعة"},
+        {"id": "pool", "label": "مسؤول (مجمَّع)", "kind": "pool"}], "positions": [("مسؤول ورشة المرايا", "pool", 1), ("عامل تركيب", "piece", None)]},
     "other": {"label": "نشاط آخر", "types": [{"id": "pool", "label": "عامل (مجمَّع)", "kind": "pool"}], "positions": [("موظف", "pool", 1)]},
 }
 
 
 class BranchIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
-    activity: Literal["workshop", "commercial", "services", "other"] = "other"
+    activity: Literal["workshop", "commercial", "services", "mirrors", "other"] = "other"
     admin_email: str = ""
     admin_password: str = ""
     admin_name: str = "مسيّر الفرع"
