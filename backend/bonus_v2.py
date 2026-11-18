@@ -30,10 +30,10 @@ def merge(p):
 
 
 def agent_bonus(collected, p):
+    """تُحسب فقط على الجزء الذي يفوق العتبة: 0.2% من العتبة إلى سقف الشريحة، و0.3% فوقه."""
     c = max(0.0, float(collected or 0))
-    if c < p["agent_threshold"]:
-        return 0.0
-    return p["agent_rate_1"] * min(c, p["agent_tier_cap"]) + p["agent_rate_2"] * max(0.0, c - p["agent_tier_cap"])
+    t, cap = p["agent_threshold"], p["agent_tier_cap"]
+    return p["agent_rate_1"] * max(0.0, min(c, cap) - t) + p["agent_rate_2"] * max(0.0, c - max(cap, t))
 
 
 def waste_ratio(breakage, consumed):
@@ -47,6 +47,17 @@ def waste_factor(w, p):
     if w >= p["waste_zero"]:
         return 0.0
     return (p["waste_zero"] - w) / (p["waste_zero"] - p["waste_full"])
+
+
+def adjusted_q(q, s, factor, p):
+    """أثر الهدر على مسؤولي الورشة والتقطيع: ينقص معيار الخسائر وحده (وزنه من مجموع المعايير)،
+    ولا يمس المنحة القصوى. s: {g: نقاط الخسائر الحالية، wsum: مجموع أوزان المعايير المعبّأة}."""
+    if q is None:
+        return None
+    g, wsum = s.get("g"), s.get("wsum") or 0
+    if g is None or wsum <= 0:
+        return q
+    return max(0.0, q - g * (1 - factor) / wsum)
 
 
 def _perf(p, q):
@@ -77,9 +88,15 @@ def compute(params, inp, staff):
             base = float((inp.get("collected") or {}).get(s["id"]) or 0)
             ref = agent_bonus(base, p)
         elif role == "workshop_head":
-            ref = over * p["workshop_rate"] * g
-        elif role == "cutting_head":
-            ref = max(0.0, float(inp.get("m2_cut") or 0) - p["cut_m2_threshold"]) * p["cut_price_m2"] * g
+            ref = over * p["workshop_rate"]
+            q = adjusted_q(q, s.get("s") or {}, g, p)
+        elif role in ("cutting_head", "cutter"):
+            m2 = (inp.get("m2_by_emp") or {}).get(s["id"])
+            if m2 is None and role == "cutting_head":
+                m2 = inp.get("m2_cut")
+            ref = max(0.0, float(m2 or 0) - p["cut_m2_threshold"]) * p["cut_price_m2"]
+            if role == "cutting_head":
+                q = adjusted_q(q, s.get("s") or {}, g, p)
         elif role == "team" and tw > 0:
             ref = pool * float(s.get("weight") or 0) / tw
         rw = 0.0
