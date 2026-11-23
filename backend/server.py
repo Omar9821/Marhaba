@@ -1930,6 +1930,8 @@ async def group_get(gid: str, user=Depends(current_user)):
     await _chat_allowed(user)
     g = await _group_for(user, gid)
     users = {u["id"]: u for u in await db.users.find({"id": {"$in": g["members"]}}, {"_id": 0}).to_list(500)}
+    for o in await hub_db.owners.find({"id": {"$in": [m for m in g["members"] if m not in users]}}, {"_id": 0}).to_list(20):
+        users[o["id"]] = {**o, "role": "admin", "name": o.get("name") or "المسؤول العام"}
     rows = await db.group_messages.find({"group_id": gid}, {"_id": 0}).sort("at", -1).to_list(200)
     rows.reverse()
     await db.chat_groups.update_one({"id": gid}, {"$set": {f"unread.{user['id']}": 0}})
