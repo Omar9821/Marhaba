@@ -65,9 +65,10 @@ export default function HubHome() {
           </Row>
           <Card style={{ gap: S.xs }} testID="hub-efficiency">
             <T variant="h3">فعالية المنح (كل الفروع)</T>
-            <T>المنح الموزَّعة: {money(d.totals.bonus)} = {pct(d.totals.bonus_pct, 2)} من رقم الأعمال</T>
-            <T>كل 1 دج منحة يقابله رقم أعمال {d.totals.turnover_per_da === null ? "—" : `${num(d.totals.turnover_per_da, 0)} دج`}</T>
-            <T>زيادة رقم الأعمال عن الشهر السابق لكل 1 دج منحة: {d.totals.gain_per_da === null ? "— (لا بيانات الشهر السابق)" : `${num(d.totals.gain_per_da, 1)} دج`}</T>
+            <T>المنح الموزَّعة: {money(d.totals.bonus)}</T>
+            <T>المنح كنسبة من رقم الأعمال: {pct(d.totals.bonus_pct, 2)}</T>
+            <T>المنح كنسبة من الربح قبل المنح: {pct(d.totals.bonus_pct_profit)}</T>
+            <T>كل 1 دج منحة يقابله ربح بعد المنح: {d.totals.profit_per_da === null ? "—" : `${num(d.totals.profit_per_da, 1)} دج`}</T>
           </Card>
           <Btn testID="hub-manage" title="إدارة الفروع (إضافة / تعطيل)" variant="secondary" icon="settings-outline" onPress={() => router.push("/hub/branches" as any)} />
           <Btn testID="hub-import" title="استيراد الفريق والحسابات من Excel" variant="secondary" icon="cloud-upload-outline" onPress={importTeam} loading={importing} />
@@ -91,12 +92,12 @@ export default function HubHome() {
                 <T variant="caption">خسائر: {money(b.losses)}</T>
               </Row>
               <Row style={{ justifyContent: "space-between", flexWrap: "wrap", gap: S.sm }}>
-                <T variant="caption">المنح الموزَّعة: {money(b.bonus)} ({pct(b.bonus_pct, 2)} من رقم الأعمال)</T>
+                <T variant="caption">المنح الموزَّعة: {money(b.bonus)} · {pct(b.bonus_pct, 2)} من رقم الأعمال</T>
                 <T variant="caption">نسبة الهدر: {pct(b.waste_ratio)}</T>
               </Row>
               <Row style={{ justifyContent: "space-between", flexWrap: "wrap", gap: S.sm }}>
-                <T variant="caption">كل 1 دج منحة ↔ رقم أعمال {b.turnover_per_da === null ? "—" : `${num(b.turnover_per_da, 0)} دج`}</T>
-                <T variant="caption">زيادة عن الشهر السابق لكل 1 دج: {b.gain_per_da === null ? "—" : `${num(b.gain_per_da, 1)} دج`}</T>
+                <T variant="caption">من الربح قبل المنح: {pct(b.bonus_pct_profit)}</T>
+                <T variant="caption">كل 1 دج منحة ↔ ربح بعد المنح {b.profit_per_da === null ? "—" : `${num(b.profit_per_da, 1)} دج`}</T>
               </Row>
               {b.best ? <T variant="caption">الأفضل: {b.best.name} ({pct(b.best.q)}){b.worst && b.worst.name !== b.best.name ? ` · الأضعف: ${b.worst.name} (${pct(b.worst.q)})` : ""}</T> : null}
               <Btn testID={`hub-enter-${i}`} title="دخول الفرع" icon="enter-outline" variant="outline" onPress={() => enter(b.id)} />

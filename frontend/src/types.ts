@@ -78,9 +78,9 @@ export type BranchStat = {
   id: string; name: string; activity: string; employees: number; turnover: number | null; pool: number | null; gross: number; payable: number; gap: number;
   fund: number; avg_q: number | null; best: { name: string; q: number } | null; worst: { name: string; q: number } | null;
   violations: number; losses: number; inspections: number;
-  bonus: number; bonus_pct: number | null; waste_ratio: number | null; turnover_per_da: number | null; turnover_gain: number | null; gain_per_da: number | null;
+  bonus: number; bonus_pct: number | null; waste_ratio: number | null; profit_before: number | null; profit_after: number | null; bonus_pct_profit: number | null; profit_per_da: number | null;
 };
-export type HubOverview = { month: string; branches: BranchStat[]; totals: { employees: number; turnover: number; payable: number; gap: number; violations: number; losses: number; avg_q: number | null; bonus: number; bonus_pct: number | null; turnover_per_da: number | null; turnover_gain: number | null; gain_per_da: number | null } };
+export type HubOverview = { month: string; branches: BranchStat[]; totals: { employees: number; turnover: number; payable: number; gap: number; violations: number; losses: number; avg_q: number | null; bonus: number; bonus_pct: number | null; profit_before: number; profit_after: number; bonus_pct_profit: number | null; profit_per_da: number | null } };
 
 // ---- الطلبات والمراسلة ----
 export type RequestKind = "complaint" | "leave_exit" | "absence_excuse" | "question" | "written_inquiry";

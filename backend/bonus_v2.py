@@ -16,6 +16,7 @@ DEFAULTS = {
     "waste_full": 0.04,               # أقل منه: منحة كاملة + مكافأة الهدر المباع
     "waste_zero": 0.08,               # عنده تنعدم المنحة
     "reward_company": 0.80, "reward_head": 0.05, "reward_team": 0.10, "reward_cutters": 0.05,
+    "gross_margin": 0.33,             # هامش الربح الإجمالي من رقم الأعمال (للمؤشرات فقط)
     "guaranteed": 0.6,                # الحصة المضمونة؛ الباقي مرتبط بالأداء
 }
 ROLES = ("commercial", "workshop_head", "cutting_head", "cutter", "team")
