@@ -31,9 +31,10 @@ export function InboxView({ staff }: { staff: boolean }) {
   const reqs = useApi<RequestSummary[]>("/requests");
   const chats = useApi<ChatItem[]>("/chat");
   const groups = useApi<{ id: string; name: string; members: number; last_text: string; last_at: string | null; unread: number }[]>("/groups");
+  const hubGroups = useApi<{ id: string; name: string; members: number; last_text: string; unread: number; direct: boolean }[]>("/hub/chat/groups");
   const [picking, setPicking] = useState(false);
   const contacts = useApi<Contact[]>(picking ? "/chat/contacts" : null);
-  const unreadChat = (chats.data ?? []).reduce((a, c) => a + c.unread, 0) + (groups.data ?? []).reduce((a, g) => a + g.unread, 0);
+  const unreadChat = (chats.data ?? []).reduce((a, c) => a + c.unread, 0) + (groups.data ?? []).reduce((a, g) => a + g.unread, 0) + (hubGroups.data ?? []).reduce((a, g) => a + g.unread, 0);
   const unreadReq = (reqs.data ?? []).filter((r) => r.unread).length;
   const list = (reqs.data ?? []).filter((r) => (filter === "all" ? true : filter === "open" ? OPEN.includes(r.status) : !OPEN.includes(r.status)));
 
@@ -41,7 +42,7 @@ export function InboxView({ staff }: { staff: boolean }) {
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
       <Header title="الطلبات والمراسلة" subtitle={staff ? "طلبات العمال والاستفسارات الكتابية والرسائل" : "قدّم طلبك وتواصل مع مسؤول الورشة أو المسيّر"} right={<SyncBadge />} />
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: S.lg, gap: S.md, paddingBottom: (usesNativeTabs ? insets.bottom : 0) + S.xl }}
-        refreshControl={<RefreshControl refreshing={reqs.refreshing} onRefresh={() => { reqs.refresh(); chats.refresh(); groups.refresh(); }} tintColor={colors.brandPrimary} />}>
+        refreshControl={<RefreshControl refreshing={reqs.refreshing} onRefresh={() => { reqs.refresh(); chats.refresh(); groups.refresh(); hubGroups.refresh(); }} tintColor={colors.brandPrimary} />}>
         <PushCard />
         <Segmented testID="inbox-seg" value={seg} onChange={setSeg}
           options={[{ key: "requests", label: `الطلبات${unreadReq ? ` (${unreadReq})` : ""}` }, { key: "chat", label: `المراسلة${unreadChat ? ` (${unreadChat})` : ""}` }]} />
@@ -87,6 +88,17 @@ export function InboxView({ staff }: { staff: boolean }) {
           <>
             <Btn testID="chat-new" title={picking ? "إخفاء القائمة" : "رسالة جديدة"} icon="chatbubble-ellipses-outline" onPress={() => setPicking((p) => !p)} />
             {staff ? <Btn testID="group-new" title="مجموعة جديدة" icon="people-outline" onPress={() => router.push("/group/new" as any)} /> : null}
+            {(hubGroups.data ?? []).map((g) => (
+              <Pressable key={g.id} testID={`hubgroup-${g.id}`} onPress={() => router.push(`/group/${g.id}?hub=1` as any)}>
+                <Card style={{ gap: S.xs, borderColor: g.unread ? colors.brandSecondary : colors.border, borderWidth: 1 }}>
+                  <Row style={{ justifyContent: "space-between", gap: S.sm }}>
+                    <T variant="h3" style={{ flex: 1 }}>🏢 {g.name}</T>
+                    {g.unread ? <Pill label={`${g.unread} جديدة`} tone="brand" /> : null}
+                  </Row>
+                  <T variant="caption" numberOfLines={1}>{g.last_text}</T>
+                </Card>
+              </Pressable>
+            ))}
             {(groups.data ?? []).map((g) => (
               <Pressable key={g.id} testID={`group-${g.id}`} onPress={() => router.push(`/group/${g.id}` as any)}>
                 <Card style={{ gap: S.xs, borderColor: g.unread ? colors.brandSecondary : colors.border, borderWidth: 1 }}>

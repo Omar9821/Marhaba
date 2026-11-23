@@ -12,12 +12,12 @@ type FileMeta = { id: string; name: string; type: string; size: number };
 type Msg = { id: string; mine: boolean; from_name: string; text: string; files: FileMeta[]; at: string };
 type Group = { id: string; name: string; can_manage: boolean; members: { user_id: string; name: string; role_label: string; owner: boolean }[]; messages: Msg[] };
 
-function FileChip({ gid, f, mine }: { gid: string; f: FileMeta; mine: boolean }) {
+function FileChip({ base, gid, f, mine }: { base: string; gid: string; f: FileMeta; mine: boolean }) {
   const { colors } = useTheme();
   const [src, setSrc] = useState<string | null>(null);
   const isImg = f.type.startsWith("image/");
-  useEffect(() => { if (isImg) api.get(`/groups/${gid}/files/${f.id}`).then((r) => setSrc(`data:${r.type};base64,${r.data}`)).catch(() => {}); }, [gid, f.id, isImg]);
-  const open = async () => { const r = await api.get(`/groups/${gid}/files/${f.id}`); saveFile(r.name, r.type, r.data); };
+  useEffect(() => { if (isImg) api.get(`${base}/${gid}/files/${f.id}`).then((r) => setSrc(`data:${r.type};base64,${r.data}`)).catch(() => {}); }, [base, gid, f.id, isImg]);
+  const open = async () => { const r = await api.get(`${base}/${gid}/files/${f.id}`); saveFile(r.name, r.type, r.data); };
   if (isImg && src) return <Pressable onPress={open}><Image source={{ uri: src }} style={{ width: 200, height: 150, borderRadius: R.md }} resizeMode="cover" /></Pressable>;
   return (
     <Pressable onPress={open} style={{ flexDirection: "row", alignItems: "center", gap: S.xs }}>
@@ -28,7 +28,8 @@ function FileChip({ gid, f, mine }: { gid: string; f: FileMeta; mine: boolean })
 }
 
 export default function GroupScreen() {
-  const { gid } = useLocalSearchParams<{ gid: string }>();
+  const { gid, hub } = useLocalSearchParams<{ gid: string; hub?: string }>();
+  const base = hub ? "/hub/chat/groups" : "/groups";
   const { colors } = useTheme();
   const toast = useToast();
   const [g, setG] = useState<Group | null>(null);
@@ -41,8 +42,8 @@ export default function GroupScreen() {
   const scroller = useRef<any>(null);
 
   const load = useCallback(async () => {
-    try { setG(await api.get(`/groups/${gid}`)); setErr(null); } catch (e: any) { setErr(e?.message || "تعذر التحميل"); } finally { setLoading(false); }
-  }, [gid]);
+    try { setG(await api.get(`${base}/${gid}`)); setErr(null); } catch (e: any) { setErr(e?.message || "تعذر التحميل"); } finally { setLoading(false); }
+  }, [gid, base]);
   useEffect(() => { load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
   useEffect(() => { setTimeout(() => scroller.current?.scrollToEnd({ animated: true }), 60); }, [g?.messages.length]);
 
@@ -51,7 +52,7 @@ export default function GroupScreen() {
     const t = text.trim();
     if ((!t && !files.length) || sending) return;
     setSending(true);
-    try { await api.post(`/groups/${gid}/messages`, { text: t, files: files.map(({ name, type, data }) => ({ name, type, data })) }); setText(""); setFiles([]); await load(); }
+    try { await api.post(`${base}/${gid}/messages`, { text: t, files: files.map(({ name, type, data }) => ({ name, type, data })) }); setText(""); setFiles([]); await load(); }
     catch (e: any) { toast(e?.message || "تعذر الإرسال", "error"); } finally { setSending(false); }
   };
 
@@ -76,7 +77,7 @@ export default function GroupScreen() {
               <View style={{ alignSelf: m.mine ? "flex-end" : "flex-start", maxWidth: "82%", gap: S.xs, backgroundColor: m.mine ? colors.brandPrimary : colors.surface, borderRadius: R.lg, paddingHorizontal: S.md, paddingVertical: S.sm, borderWidth: m.mine ? 0 : 1, borderColor: colors.border }}>
                 {!m.mine ? <T variant="caption" style={{ fontWeight: "700" }}>{m.from_name}</T> : null}
                 {m.text ? <T style={{ color: m.mine ? colors.onBrandPrimary : colors.onSurface }}>{m.text}</T> : null}
-                {m.files.map((f) => <FileChip key={f.id} gid={gid as string} f={f} mine={m.mine} />)}
+                {m.files.map((f) => <FileChip key={f.id} base={base} gid={gid as string} f={f} mine={m.mine} />)}
                 <T variant="caption" style={{ color: m.mine ? colors.onBrandPrimary : colors.muted, opacity: 0.8 }}>{new Date(m.at).toLocaleTimeString("ar-DZ", { hour: "2-digit", minute: "2-digit" })}</T>
               </View>
             </View>
