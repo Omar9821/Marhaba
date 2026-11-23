@@ -13,7 +13,7 @@ import { BranchStat, HubOverview } from "@/src/types";
 import { Btn, Card, ConfirmSheet, EmptyState, ErrorView, Header, Loading, MonthSwitcher, Pill, ProgressBar, Row, S, StatTile, T, useToast } from "@/src/ui";
 
 const ACT: Record<string, string> = { workshop: "ورشة / إنتاج", commercial: "تجاري", services: "خدمات", mirrors: "مرايا الحمام LED", other: "نشاط آخر" };
-const pct = (v: number | null) => (v === null || v === undefined ? "—" : `${num(v * 100, 1)}%`);
+const pct = (v: number | null, digits = 1) => (v === null || v === undefined ? "—" : `${num(v * 100, digits)}%`);
 
 /** البوابة العامة للمسؤول العام: أداء كل الفروع في نظرة واحدة + الدخول إلى أي فرع + إدارة الفروع. */
 export default function HubHome() {
@@ -63,6 +63,12 @@ export default function HubHome() {
             <StatTile testID="hub-violations" icon="warning-outline" label="المخالفات" value={String(d.totals.violations)} />
             <StatTile testID="hub-losses" icon="cash-outline" label="الخسائر" value={money(d.totals.losses)} />
           </Row>
+          <Card style={{ gap: S.xs }} testID="hub-efficiency">
+            <T variant="h3">فعالية المنح (كل الفروع)</T>
+            <T>المنح الموزَّعة: {money(d.totals.bonus)} = {pct(d.totals.bonus_pct, 2)} من رقم الأعمال</T>
+            <T>كل 1 دج منحة يقابله رقم أعمال {d.totals.turnover_per_da === null ? "—" : `${num(d.totals.turnover_per_da, 0)} دج`}</T>
+            <T>زيادة رقم الأعمال عن الشهر السابق لكل 1 دج منحة: {d.totals.gain_per_da === null ? "— (لا بيانات الشهر السابق)" : `${num(d.totals.gain_per_da, 1)} دج`}</T>
+          </Card>
           <Btn testID="hub-manage" title="إدارة الفروع (إضافة / تعطيل)" variant="secondary" icon="settings-outline" onPress={() => router.push("/hub/branches" as any)} />
           <Btn testID="hub-import" title="استيراد الفريق والحسابات من Excel" variant="secondary" icon="cloud-upload-outline" onPress={importTeam} loading={importing} />
           {d.branches.length === 0 ? <EmptyState icon="business-outline" title="لا توجد فروع" /> : null}
@@ -83,6 +89,14 @@ export default function HubHome() {
               <Row style={{ justifyContent: "space-between", flexWrap: "wrap", gap: S.sm }}>
                 <T variant="caption">مخالفات: {b.violations} · تفتيشات: {b.inspections}</T>
                 <T variant="caption">خسائر: {money(b.losses)}</T>
+              </Row>
+              <Row style={{ justifyContent: "space-between", flexWrap: "wrap", gap: S.sm }}>
+                <T variant="caption">المنح الموزَّعة: {money(b.bonus)} ({pct(b.bonus_pct, 2)} من رقم الأعمال)</T>
+                <T variant="caption">نسبة الهدر: {pct(b.waste_ratio)}</T>
+              </Row>
+              <Row style={{ justifyContent: "space-between", flexWrap: "wrap", gap: S.sm }}>
+                <T variant="caption">كل 1 دج منحة ↔ رقم أعمال {b.turnover_per_da === null ? "—" : `${num(b.turnover_per_da, 0)} دج`}</T>
+                <T variant="caption">زيادة عن الشهر السابق لكل 1 دج: {b.gain_per_da === null ? "—" : `${num(b.gain_per_da, 1)} دج`}</T>
               </Row>
               {b.best ? <T variant="caption">الأفضل: {b.best.name} ({pct(b.best.q)}){b.worst && b.worst.name !== b.best.name ? ` · الأضعف: ${b.worst.name} (${pct(b.worst.q)})` : ""}</T> : null}
               <Btn testID={`hub-enter-${i}`} title="دخول الفرع" icon="enter-outline" variant="outline" onPress={() => enter(b.id)} />

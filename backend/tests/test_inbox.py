@@ -311,3 +311,11 @@ def test_import_team(c):
     assert rep2["employees_created"] == 0 and rep2["employees_updated"] == 4
     # غير المسؤول العام ممنوع
     assert c.post("/api/hub/import-team", json={"data": _roster_xlsx()}, headers=adm).status_code == 403
+
+
+def test_hub_overview_metrics(c):
+    ow = login(c, "owner@company.dz", "Owner@123456")
+    d = c.get("/api/hub/overview", headers=ow).json()
+    t = d["totals"]
+    assert {"bonus", "bonus_pct", "turnover_per_da", "gain_per_da"} <= set(t)
+    assert all("waste_ratio" in b and "turnover_per_da" in b for b in d["branches"])
