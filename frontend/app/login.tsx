@@ -20,7 +20,7 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
-    if (!email.trim() || !password) return setError("يرجى إدخال البريد الإلكتروني وكلمة المرور");
+    if (!email.trim() || !password) return setError("يرجى إدخال البريد أو اسم المستخدم وكلمة المرور");
     setError(null);
     setBusy("email");
     try {
@@ -59,7 +59,7 @@ export default function Login() {
         </View>
         <View style={{ padding: S.xl, gap: S.lg, marginTop: -S.lg, backgroundColor: colors.surface, borderTopLeftRadius: R.lg, borderTopRightRadius: R.lg }}>
           <T variant="h2">تسجيل الدخول</T>
-          <Field testID="login-email-input" label="البريد الإلكتروني" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" placeholder="name@company.dz" />
+          <Field testID="login-email-input" label="البريد الإلكتروني أو اسم المستخدم" value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" autoComplete="email" placeholder="name@company.dz" />
           <Field testID="login-password-input" label="كلمة المرور" value={password} onChangeText={setPassword} secureTextEntry placeholder="••••••••" onSubmitEditing={submit} returnKeyType="go" />
           {error ? (
             <Row testID="login-error-message" style={{ gap: S.sm, backgroundColor: colors.errorSoft, padding: S.md, borderRadius: R.md }}>

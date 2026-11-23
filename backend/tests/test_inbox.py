@@ -246,3 +246,68 @@ def test_bonus_amount_hidden_by_default(c, H):
     # إخفاؤه من جديد
     assert c.put(f"/api/employees/{eid}", json={**body, "show_bonus_amount": False}, headers=H["adm"]).json()["show_bonus_amount"] is False
     assert c.get("/api/me/sheet", headers=H["emp"]).json()["row"]["t"] is None
+
+
+def test_groups_with_files(c, H):
+    import base64
+    me = {k: c.get("/api/auth/me", headers=H[k]).json() for k in ("adm", "insp", "emp")}
+    uid = {k: v.get("id") or v["user"]["id"] if "user" in v else v["id"] for k, v in me.items()}
+    # العامل لا ينشئ مجموعة
+    assert c.post("/api/groups", json={"name": "x", "member_ids": [uid["adm"]]}, headers=H["emp"]).status_code == 403
+    r = c.post("/api/groups", json={"name": "ورشة الصباح", "member_ids": [uid["emp"]]}, headers=H["adm"])
+    assert r.status_code == 200, r.text
+    gid = r.json()["id"]
+    png = base64.b64encode(b"\x89PNG\r\n\x1a\nfake").decode()
+    r = c.post(f"/api/groups/{gid}/messages", json={"text": "صورة اليوم", "files": [{"name": "a.png", "type": "image/png", "data": png}]}, headers=H["emp"])
+    assert r.status_code == 200, r.text
+    assert any(x["unread"] == 1 for x in c.get("/api/groups", headers=H["adm"]).json())
+    g = c.get(f"/api/groups/{gid}", headers=H["adm"]).json()
+    assert g["can_manage"] and len(g["members"]) == 2 and g["messages"][0]["files"][0]["name"] == "a.png"
+    fid = g["messages"][0]["files"][0]["id"]
+    assert c.get(f"/api/groups/{gid}/files/{fid}", headers=H["emp"]).json()["data"] == png
+    # ملف ممنوع وملف كبير وغير عضو
+    bad = {"name": "v.exe", "type": "x", "data": png}
+    assert c.post(f"/api/groups/{gid}/messages", json={"files": [bad]}, headers=H["adm"]).status_code == 400
+    assert c.get(f"/api/groups/{gid}", headers=H["insp"]).status_code == 404
+    assert c.put(f"/api/groups/{gid}/members", json={"add": [uid["insp"]]}, headers=H["emp"]).status_code == 403
+    assert c.put(f"/api/groups/{gid}/members", json={"add": [uid["insp"]]}, headers=H["adm"]).status_code == 200
+    assert c.get(f"/api/groups/{gid}", headers=H["insp"]).status_code == 200
+    assert c.delete(f"/api/groups/{gid}", headers=H["adm"]).status_code == 200
+
+
+def _roster_xlsx():
+    import base64, io
+    from openpyxl import Workbook
+    wb = Workbook(); ws = wb.active; ws.title = "الحسابات"
+    ws.append(["الفرع", "نوع نشاط الفرع", "الاسم", "المنصب", "الدور", "نوع العمولة", "دور المنحة", "الوزن", "اسم المستخدم", "كلمة المرور", "يراقب"])
+    ws.append(["main", "workshop", "مسيّر تجريبي", "", "مسيّر", "", "", "", "boss.t", "abc123", ""])
+    ws.append(["main", "workshop", "رئيس ورشة", "مسؤول الورشة", "موظف", "pool", "مسؤول الورشة", "", "head.t", "abc124", "كل العمال"])
+    ws.append(["main", "workshop", "عامل ا", "عامل ورشة", "موظف", "pool", "فريق", 5, "w1.t", "abc125", ""])
+    ws.append(["main", "workshop", "قاطع ب", "تقطيع", "موظف", "cutting", "عون تقطيع", "", "cut.t", "abc126", ""])
+    ws.append(["مرايا اختبار", "mirrors", "مسيّر ليد", "", "مسيّر", "", "", "", "boss.led", "abc127", ""])
+    ws.append(["مرايا اختبار", "mirrors", "عامل ليد", "عامل تركيب", "موظف", "piece", "", "", "w.led", "abc128", ""])
+    bio = io.BytesIO(); wb.save(bio)
+    return base64.b64encode(bio.getvalue()).decode()
+
+
+def test_import_team(c):
+    ow = login(c, "owner@company.dz", "Owner@123456")
+    r = c.post("/api/hub/import-team", json={"data": _roster_xlsx()}, headers=ow)
+    assert r.status_code == 200, r.text
+    rep = r.json()
+    assert rep["admins_created"] == 2 and rep["employees_created"] == 4 and rep["supervisors"] == 1 and not rep["errors"]
+    # كل حساب يدخل إلى فرعه
+    assert login(c, "boss.t", "abc123") and login(c, "boss.led", "abc127")
+    head = login(c, "head.t", "abc124")
+    me = c.get("/api/auth/me", headers=head).json()
+    assert me["role"] == "inspector"
+    emps = c.get("/api/employees", headers=head).json()
+    assert {e["full_name"] for e in emps} == {"عامل ا", "قاطع ب"}          # يراقب كل العمال عدا نفسه
+    adm = login(c, "boss.t", "abc123")
+    roles = {e["full_name"]: e.get("bonus_role") for e in c.get("/api/employees", headers=adm).json()}
+    assert roles.get("قاطع ب") == "cutter" and roles.get("رئيس ورشة") == "workshop_head"
+    # إعادة الاستيراد لا تكرّر
+    rep2 = c.post("/api/hub/import-team", json={"data": _roster_xlsx()}, headers=ow).json()
+    assert rep2["employees_created"] == 0 and rep2["employees_updated"] == 4
+    # غير المسؤول العام ممنوع
+    assert c.post("/api/hub/import-team", json={"data": _roster_xlsx()}, headers=adm).status_code == 403
