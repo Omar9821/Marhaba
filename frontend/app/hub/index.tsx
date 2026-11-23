@@ -3,12 +3,14 @@ import { useState } from "react";
 import { RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
+import { pickFiles } from "@/src/files";
 import { currentMonth, money, num } from "@/src/format";
 import { useApi } from "@/src/hooks";
 import { useTheme } from "@/src/theme";
 import { BranchStat, HubOverview } from "@/src/types";
-import { Btn, Card, ConfirmSheet, EmptyState, ErrorView, Header, Loading, MonthSwitcher, Pill, ProgressBar, Row, S, StatTile, T } from "@/src/ui";
+import { Btn, Card, ConfirmSheet, EmptyState, ErrorView, Header, Loading, MonthSwitcher, Pill, ProgressBar, Row, S, StatTile, T, useToast } from "@/src/ui";
 
 const ACT: Record<string, string> = { workshop: "ورشة / إنتاج", commercial: "تجاري", services: "خدمات", mirrors: "مرايا الحمام LED", other: "نشاط آخر" };
 const pct = (v: number | null) => (v === null || v === undefined ? "—" : `${num(v * 100, 1)}%`);
@@ -21,6 +23,18 @@ export default function HubHome() {
   const { user, logout, enterBranch } = useAuth();
   const [month, setMonth] = useState(currentMonth());
   const [confirm, setConfirm] = useState(false);
+  const toast = useToast();
+  const [importing, setImporting] = useState(false);
+  const importTeam = async () => {
+    try {
+      const f = (await pickFiles())[0];
+      if (!f) return;
+      setImporting(true);
+      const r = await api.post("/hub/import-team", { data: f.data });
+      toast(`تم: ${r.admins_created + r.admins_updated} مسيّر، ${r.employees_created + r.employees_updated} موظف، ${r.supervisors} مراقب${r.errors?.length ? ` — أخطاء: ${r.errors.join("، ")}` : ""}`);
+      q.refresh();
+    } catch (e: any) { toast(e?.message || "تعذر الاستيراد", "error"); } finally { setImporting(false); }
+  };
   const q = useApi<HubOverview>(`/hub/overview?month=${month}`);
   const d = q.data;
 
@@ -50,6 +64,7 @@ export default function HubHome() {
             <StatTile testID="hub-losses" icon="cash-outline" label="الخسائر" value={money(d.totals.losses)} />
           </Row>
           <Btn testID="hub-manage" title="إدارة الفروع (إضافة / تعطيل)" variant="secondary" icon="settings-outline" onPress={() => router.push("/hub/branches" as any)} />
+          <Btn testID="hub-import" title="استيراد الفريق والحسابات من Excel" variant="secondary" icon="cloud-upload-outline" onPress={importTeam} loading={importing} />
           {d.branches.length === 0 ? <EmptyState icon="business-outline" title="لا توجد فروع" /> : null}
           {d.branches.map((b: BranchStat, i) => (
             <Card key={b.id} style={{ gap: S.sm }} testID={`hub-branch-${i}`}>

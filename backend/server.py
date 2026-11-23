@@ -83,6 +83,7 @@ logger = logging.getLogger(__name__)
 #   announcements      {id, title, body, audience: all|employees|inspectors|selected, employee_ids, created_by, read_by:[user_id]}
 #   requests           {id, ref, kind, to, subject, fields, status, employee_id, thread:[{by_id,by_name,by_role,text,at,type}], due_at, unread_staff/employee}
 #   chats / chat_messages  مراسلة ثنائية (pair=[user_id,user_id]) ورسائلها
+#   chat_groups {id, name, owner, members:[user_id], unread{uid:n}} · group_messages {id, group_id, from, text, files:[{id,name,type,size}], at} · group_files {id, group_id, name, type, size, data(base64)}
 #   settings (id:"permissions")  صلاحيات المراقب والعامل (انظر DEFAULT_PERMS)
 # قاعدة البوابة (…__hub): branches {id, name, activity, db_name, active} · owners {id, email, name, password_hash}
 #   infraction_types   {id, name, deduction_type: points|percent|amount, value, active}
@@ -114,6 +115,9 @@ INDEXES: dict[str, list[IndexModel]] = {
     "chats": [IndexModel([("id", ASCENDING)], name="id", unique=True),
               IndexModel([("pair", ASCENDING)], name="pair")],
     "chat_messages": [IndexModel([("chat_id", ASCENDING), ("at", ASCENDING)], name="chat_at")],
+    "chat_groups": [IndexModel([("id", ASCENDING)], name="id", unique=True), IndexModel([("members", ASCENDING)], name="members")],
+    "group_messages": [IndexModel([("group_id", ASCENDING), ("at", ASCENDING)], name="group_at")],
+    "group_files": [IndexModel([("id", ASCENDING)], name="id", unique=True)],
     "infractions": [IndexModel([("id", ASCENDING)], name="id", unique=True),
                     IndexModel([("employee_id", ASCENDING), ("date", DESCENDING)], name="emp_date"),
                     IndexModel([("date", DESCENDING)], name="date")],
@@ -1835,6 +1839,175 @@ async def chat_with(other_id: str, user=Depends(current_user)):
     return {"other": await _contact_row(other), "messages": msgs}
 
 
+# ------------------------------- مجموعات المراسلة (مع مرفقات) ---------------
+import base64
+import binascii
+
+MAX_FILE_BYTES = 5 * 1024 * 1024
+MAX_FILES_PER_MSG = 5
+BLOCKED_EXT = {"exe", "bat", "cmd", "com", "scr", "msi", "js", "vbs", "ps1", "sh", "jar", "apk", "dll", "html", "htm", "svg"}
+
+
+class FileIn(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    type: str = Field(default="application/octet-stream", max_length=100)
+    data: str                                             # base64 بلا بادئة
+
+
+class GroupIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    member_ids: List[str] = []
+
+
+class GroupMembersIn(BaseModel):
+    add: List[str] = []
+    remove: List[str] = []
+
+
+class GroupMsgIn(BaseModel):
+    text: str = Field(default="", max_length=3000)
+    files: List[FileIn] = []
+
+
+async def _group_staff(user: dict) -> None:
+    if user["role"] not in ("admin", "inspector"):
+        raise HTTPException(403, "إنشاء المجموعات للمسيّر والمراقب فقط")
+    await _chat_allowed(user)
+
+
+async def _allowed_members(user: dict, ids: List[str]) -> List[str]:
+    """أعضاء صالحون: مستخدمو الفرع النشطون، والمراقب لا يضم إلا عمال فريقه والمسيّرين."""
+    out = []
+    for uid in dict.fromkeys(ids):
+        if uid == user["id"]:
+            continue
+        u = await db.users.find_one({"id": uid}, {"_id": 0})
+        if not u:
+            continue
+        if user["role"] == "inspector" and u["role"] == "employee" and not await in_scope(user, u.get("employee_id")):
+            continue
+        if user["role"] == "inspector" and u["role"] == "inspector":
+            continue
+        out.append(uid)
+    return out
+
+
+async def _group_for(user: dict, gid: str) -> dict:
+    g = await db.chat_groups.find_one({"id": gid, "members": user["id"]}, {"_id": 0})
+    if not g:
+        raise HTTPException(404, "المجموعة غير موجودة")
+    return g
+
+
+def _iso(d):
+    return (d.replace(tzinfo=timezone.utc) if d.tzinfo is None else d).isoformat() if d else None
+
+
+@api.post("/groups")
+async def group_create(data: GroupIn, user=Depends(current_user)):
+    await _group_staff(user)
+    members = await _allowed_members(user, data.member_ids)
+    if not members:
+        raise HTTPException(400, "اختر عضوًا واحدًا على الأقل")
+    now = now_utc()
+    g = {"id": new_id(), "name": data.name.strip(), "owner": user["id"], "members": [user["id"], *members],
+         "unread": {}, "created_at": now, "last_at": now, "last_text": "أُنشئت المجموعة"}
+    await db.chat_groups.insert_one(dict(g))
+    notify(members, data.name.strip(), "أُضفتَ إلى مجموعة مراسلة", f"/group/{g['id']}")
+    return {"id": g["id"]}
+
+
+@api.get("/groups")
+async def group_list(user=Depends(current_user)):
+    await _chat_allowed(user)
+    items = await db.chat_groups.find({"members": user["id"]}, {"_id": 0}).sort("last_at", -1).to_list(200)
+    return [{"id": g["id"], "name": g["name"], "members": len(g["members"]), "last_text": g.get("last_text", ""),
+             "last_at": _iso(g.get("last_at")), "unread": int((g.get("unread") or {}).get(user["id"], 0)), "mine": g["owner"] == user["id"]} for g in items]
+
+
+@api.get("/groups/{gid}")
+async def group_get(gid: str, user=Depends(current_user)):
+    await _chat_allowed(user)
+    g = await _group_for(user, gid)
+    users = {u["id"]: u for u in await db.users.find({"id": {"$in": g["members"]}}, {"_id": 0}).to_list(500)}
+    rows = await db.group_messages.find({"group_id": gid}, {"_id": 0}).sort("at", -1).to_list(200)
+    rows.reverse()
+    await db.chat_groups.update_one({"id": gid}, {"$set": {f"unread.{user['id']}": 0}})
+    nm = lambda uid: (users.get(uid) or {}).get("name") or "—"
+    return {"id": gid, "name": g["name"], "can_manage": g["owner"] == user["id"] or user["role"] == "admin",
+            "members": [{"user_id": u, "name": nm(u), "role_label": ROLE_LABEL.get((users.get(u) or {}).get("role", ""), ""), "owner": u == g["owner"]} for u in g["members"] if u in users],
+            "messages": [{"id": m["id"], "mine": m["from"] == user["id"], "from_name": nm(m["from"]), "text": m.get("text", ""), "files": m.get("files", []), "at": _iso(m["at"])} for m in rows]}
+
+
+@api.post("/groups/{gid}/messages")
+async def group_send(gid: str, data: GroupMsgIn, user=Depends(current_user)):
+    await _chat_allowed(user)
+    g = await _group_for(user, gid)
+    text = data.text.strip()
+    if not text and not data.files:
+        raise HTTPException(400, "اكتب رسالة أو أرفق ملفًا")
+    if len(data.files) > MAX_FILES_PER_MSG:
+        raise HTTPException(400, f"الحد الأقصى {MAX_FILES_PER_MSG} ملفات في الرسالة")
+    metas = []
+    for f in data.files:
+        ext = f.name.rsplit(".", 1)[-1].lower() if "." in f.name else ""
+        if ext in BLOCKED_EXT:
+            raise HTTPException(400, f"نوع الملف غير مسموح: {f.name}")
+        try:
+            raw = base64.b64decode(f.data, validate=True)
+        except (binascii.Error, ValueError):
+            raise HTTPException(400, "ملف غير صالح")
+        if len(raw) > MAX_FILE_BYTES:
+            raise HTTPException(400, f"الملف {f.name} أكبر من 5 ميغابايت")
+        fid = new_id()
+        await db.group_files.insert_one({"id": fid, "group_id": gid, "name": f.name, "type": f.type, "size": len(raw), "data": f.data})
+        metas.append({"id": fid, "name": f.name, "type": f.type, "size": len(raw)})
+    now = now_utc()
+    await db.group_messages.insert_one({"id": new_id(), "group_id": gid, "from": user["id"], "text": text, "files": metas, "at": now})
+    preview = text[:90] or ("📎 " + metas[0]["name"])
+    others = [m for m in g["members"] if m != user["id"]]
+    await db.chat_groups.update_one({"id": gid}, {"$set": {"last_at": now, "last_text": f"{user.get('name') or ''}: {preview}"},
+                                                  "$inc": {f"unread.{m}": 1 for m in others}})
+    notify(others, g["name"], f"{user.get('name') or ''}: {preview}", f"/group/{gid}")
+    return {"ok": True}
+
+
+@api.get("/groups/{gid}/files/{fid}")
+async def group_file(gid: str, fid: str, user=Depends(current_user)):
+    await _chat_allowed(user)
+    await _group_for(user, gid)
+    f = await db.group_files.find_one({"id": fid, "group_id": gid}, {"_id": 0})
+    if not f:
+        raise HTTPException(404, "الملف غير موجود")
+    return f
+
+
+@api.put("/groups/{gid}/members")
+async def group_members(gid: str, data: GroupMembersIn, user=Depends(current_user)):
+    await _chat_allowed(user)
+    g = await _group_for(user, gid)
+    if g["owner"] != user["id"] and user["role"] != "admin":
+        raise HTTPException(403, "إدارة الأعضاء لمنشئ المجموعة")
+    add = await _allowed_members(user, data.add)
+    rem = [x for x in data.remove if x != g["owner"]]
+    members = [m for m in dict.fromkeys([*g["members"], *add]) if m not in rem]
+    await db.chat_groups.update_one({"id": gid}, {"$set": {"members": members}})
+    notify(add, g["name"], "أُضفتَ إلى مجموعة مراسلة", f"/group/{gid}")
+    return {"ok": True}
+
+
+@api.delete("/groups/{gid}")
+async def group_delete(gid: str, user=Depends(current_user)):
+    await _chat_allowed(user)
+    g = await _group_for(user, gid)
+    if g["owner"] != user["id"] and user["role"] != "admin":
+        raise HTTPException(403, "حذف المجموعة لمنشئها")
+    await db.chat_groups.delete_one({"id": gid})
+    await db.group_messages.delete_many({"group_id": gid})
+    await db.group_files.delete_many({"group_id": gid})
+    return {"ok": True}
+
+
 # ------------------------------- Hub (المسؤول العام) ----------------------
 ACTIVITIES = {
     "workshop": {"label": "ورشة / إنتاج", "types": None, "positions": [("تجاري", "commercial", None), ("مالية", "finance", None), ("تقطيع", "cutting", None), ("عامل", "pool", 1)]},
@@ -1883,6 +2056,138 @@ async def init_branch_db(activity: str, admin: Optional[tuple] = None, inspector
         if email and pw and not await db.users.find_one({"email": email.strip().lower()}):
             await db.users.insert_one({"id": new_id(), "email": email.strip().lower(), "name": name, "role": role,
                                        "password_hash": hash_pw(pw), "created_at": now_utc()})
+
+
+# ------------------------------- استيراد الفريق من ملف Excel (للمسؤول العام) ---
+class ImportIn(BaseModel):
+    data: str                                              # ملف xlsx بصيغة base64
+    dry_run: bool = False
+
+
+IMPORT_COLS = ["الفرع", "نوع نشاط الفرع", "الاسم", "المنصب", "الدور", "نوع العمولة", "دور المنحة", "الوزن", "اسم المستخدم", "كلمة المرور", "يراقب"]
+BONUS_ROLES_AR = {"عون تجاري": "commercial", "مسؤول الورشة": "workshop_head", "عون تقطيع": "cutter", "فريق": "team", "": None}
+
+
+def _parse_import(raw: bytes) -> List[dict]:
+    import io
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(raw), data_only=True)
+    ws = wb["الحسابات"] if "الحسابات" in wb.sheetnames else wb.worksheets[0]
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        raise HTTPException(400, "الملف فارغ")
+    head = [str(c or "").strip() for c in rows[0]]
+    miss = [c for c in IMPORT_COLS if c not in head]
+    if miss:
+        raise HTTPException(400, "أعمدة ناقصة: " + "، ".join(miss))
+    ix = {c: head.index(c) for c in IMPORT_COLS}
+    out = []
+    for r in rows[1:]:
+        if not r or not any(r):
+            continue
+        d = {c: ("" if r[ix[c]] is None else str(r[ix[c]]).strip()) for c in IMPORT_COLS}
+        if d["الاسم"] and d["اسم المستخدم"] and d["كلمة المرور"]:
+            out.append(d)
+    return out
+
+
+async def _import_branch_rows(rows: List[dict], report: dict, dry: bool) -> None:
+    """ينفَّذ داخل سياق الفرع: مناصب، مسيّرون، موظفون، مراقبون."""
+    pm = {p["name"]: p for p in await db.positions.find({}, {"_id": 0}).to_list(500)}
+    emp_ids: dict = {}
+    for d in rows:
+        role, uname = d["الدور"], d["اسم المستخدم"].lower()
+        if len(d["كلمة المرور"]) < 6:
+            report["errors"].append(f"{d['الاسم']}: كلمة المرور أقل من 6 أحرف")
+            continue
+        if role == "مسيّر":
+            if dry:
+                continue
+            other = await db.users.find_one({"email": uname}, {"_id": 0})
+            upd = {"name": d["الاسم"], "role": "admin", "password_hash": hash_pw(d["كلمة المرور"])}
+            await db.users.update_one({"email": uname}, {"$set": upd, "$setOnInsert": {"id": new_id(), "email": uname, "created_at": now_utc()}}, upsert=True)
+            report["admins_updated" if other else "admins_created"] += 1
+            continue
+        pname = d["المنصب"] or "موظف"
+        wt = float(d["الوزن"]) if d["الوزن"].replace(".", "", 1).isdigit() else None
+        ptype = d["نوع العمولة"] or "pool"
+        if pname not in pm and not dry:
+            doc = {"id": new_id(), "name": pname, "point_value": None, "kpis": [], "perf_type": ptype, "post_weight": wt}
+            await db.positions.insert_one(dict(doc))
+            pm[pname] = doc
+        if dry:
+            continue
+        brole = BONUS_ROLES_AR.get(d["دور المنحة"])
+        emp = await db.employees.find_one({"full_name": d["الاسم"]}, {"_id": 0})
+        eid = emp["id"] if emp else new_id()
+        await sync_employee_user(eid, d["الاسم"], uname, d["كلمة المرور"], False, [])
+        base = {"full_name": d["الاسم"], "email": uname, "position_id": pm[pname]["id"], "perf_type": ptype, "post_weight": wt, "bonus_role": brole, "status": "active"}
+        if emp:
+            await db.employees.update_one({"id": eid}, {"$set": base})
+            report["employees_updated"] += 1
+        else:
+            await db.employees.insert_one({"id": eid, "phone_enc": enc(""), "hire_date": "", "base_salary_enc": enc(0), "created_at": now_utc(),
+                                           "supervisor": False, "supervise_employees": [], "show_bonus_amount": False, **base})
+            report["employees_created"] += 1
+        emp_ids[d["الاسم"]] = eid
+    if dry:
+        return
+    for d in rows:  # المراقبون بعد إنشاء كل العمال
+        if d["الدور"] == "موظف" and d["يراقب"] and d["الاسم"] in emp_ids:
+            eid = emp_ids[d["الاسم"]]
+            want = [x for n, x in emp_ids.items() if n != d["الاسم"]] if d["يراقب"] == "كل العمال" else [emp_ids[n.strip()] for n in d["يراقب"].split("،") if n.strip() in emp_ids]
+            scope = await clean_scope(eid, True, want)
+            await sync_employee_user(eid, d["الاسم"], d["اسم المستخدم"].lower(), d["كلمة المرور"], True, scope)
+            await db.employees.update_one({"id": eid}, {"$set": {"supervisor": True, "supervise_employees": scope}})
+            report["supervisors"] += 1
+
+
+@hub.post("/import-team")
+async def hub_import_team(data: ImportIn, _=Depends(owner_only)):
+    import base64 as b64
+    try:
+        raw = b64.b64decode(data.data, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(400, "ملف غير صالح")
+    rows = _parse_import(raw)
+    by_branch: dict = {}
+    for d in rows:
+        by_branch.setdefault((d["الفرع"], d["نوع نشاط الفرع"]), []).append(d)
+    report = {"branches": [], "admins_created": 0, "admins_updated": 0, "employees_created": 0, "employees_updated": 0, "supervisors": 0, "errors": []}
+    # البريد/اسم المستخدم يجب ألا يتكرر بين الفروع
+    seen: dict = {}
+    for (bname, _a), rs in by_branch.items():
+        for d in rs:
+            u = d["اسم المستخدم"].lower()
+            if u in seen and seen[u] != bname:
+                raise HTTPException(400, f"اسم المستخدم {u} مكرر بين فرعين")
+            seen[u] = bname
+    for (bname, act), rs in by_branch.items():
+        if bname == "main":
+            b = await hub_db.branches.find_one({"id": "main"}, {"_id": 0})
+        else:
+            b = await hub_db.branches.find_one({"name": bname}, {"_id": 0})
+            if not b and not data.dry_run:
+                if act not in ACTIVITIES:
+                    raise HTTPException(400, f"نوع نشاط غير معروف: {act}")
+                bid = new_id()[:10]
+                b = {"id": bid, "name": bname, "activity": act, "db_name": f"{MAIN_DB_NAME}_b_{bid}", "active": True, "created_at": now_utc()}
+                await hub_db.branches.insert_one(dict(b))
+                with use_branch(b["db_name"]):
+                    await init_branch_db(act)
+                report["branches"].append(f"أُنشئ فرع: {bname}")
+        if not b:
+            report["branches"].append(f"سيُنشأ فرع: {bname}")
+            continue
+        for other in await hub_db.branches.find({"id": {"$ne": b["id"]}}, {"_id": 0}).to_list(200):
+            with use_branch(other["db_name"]):
+                for d in rs:
+                    if await db.users.find_one({"email": d["اسم المستخدم"].lower()}):
+                        raise HTTPException(400, f"اسم المستخدم {d['اسم المستخدم']} مستخدم في فرع آخر")
+        with use_branch(b["db_name"]):
+            await _import_branch_rows(rs, report, data.dry_run)
+        report["branches"].append(f"{b['name']}: {len(rs)} صفًا")
+    return report
 
 
 @hub.get("/branches")
