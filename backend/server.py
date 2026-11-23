@@ -2192,6 +2192,198 @@ async def hub_import_team(data: ImportIn, _=Depends(owner_only)):
     return report
 
 
+# ------------------------------- المراسلة العامة (عابرة للفروع) -------------
+# hub_db: hub_groups {id, name, direct, owner_key, members:[key], info{key:{name,branch,role}}, unread{key:n}, last_at, last_text}
+#         hub_messages {id, group_id, from, from_name, text, files, at} · hub_files {id, group_id, name, type, size, data}
+# المفتاح: "owner:<id>" للمسؤول العام، و"<branch_id>:<user_id>" لمستخدمي الفروع.
+async def hub_principal(request: Request) -> dict:
+    payload = decode_token(request)
+    if not payload or not payload.get("sub"):
+        raise HTTPException(401, "غير مصرح")
+    if payload.get("owner"):
+        o = await hub_db.owners.find_one({"id": payload["sub"]}, {"_id": 0})
+        if not o:
+            raise HTTPException(401, "المستخدم غير موجود")
+        return {"key": f"owner:{o['id']}", "name": o.get("name") or "المسؤول العام", "is_owner": True, "role": "owner"}
+    bid = payload.get("branch") or "main"
+    b = await get_branch(bid)
+    if not b:
+        raise HTTPException(401, "الفرع غير موجود")
+    with use_branch(b["db_name"]):
+        u = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
+        if not u:
+            raise HTTPException(401, "المستخدم غير موجود")
+        allowed = u["role"] == "admin" or bool((await perms_for(u)).get("use_messages"))
+    if not allowed:
+        raise HTTPException(403, "المراسلة غير مفعّلة لحسابك")
+    return {"key": f"{bid}:{u['id']}", "name": u.get("name") or u.get("email", ""), "is_owner": False, "role": u["role"],
+            "branch": b["name"], "branch_id": bid, "db_name": b["db_name"], "uid": u["id"]}
+
+
+class HubGroupIn(BaseModel):
+    name: str = Field(default="", max_length=80)
+    member_keys: List[str] = []
+
+
+def _hub_notify(keys: List[str], title: str, body: str, gid: str) -> None:
+    for k in keys:
+        if k.startswith("owner:"):
+            continue
+        bid, uid = k.split(":", 1)
+        b = _branch_cache.get(bid, (0, None))[1]
+        if b:
+            tok = _branch_db.set(b["db_name"])
+            try:
+                notify([uid], title, body, f"/group/{gid}?hub=1")
+            finally:
+                _branch_db.reset(tok)
+
+
+async def _hub_member(g: dict, me: dict) -> dict:
+    if me["key"] not in g["members"]:
+        raise HTTPException(404, "المجموعة غير موجودة")
+    return g
+
+
+async def _hub_group(gid: str, me: dict) -> dict:
+    g = await hub_db.hub_groups.find_one({"id": gid}, {"_id": 0})
+    if not g:
+        raise HTTPException(404, "المجموعة غير موجودة")
+    return await _hub_member(g, me)
+
+
+@hub.get("/chat/contacts")
+async def hub_chat_contacts(_=Depends(owner_only)):
+    out = []
+    for b in await hub_db.branches.find({"active": {"$ne": False}}, {"_id": 0}).sort("created_at", 1).to_list(200):
+        with use_branch(b["db_name"]):
+            pos = {p["id"]: p["name"] for p in await db.positions.find({}, {"_id": 0}).to_list(500)}
+            emps = {e["id"]: e for e in await db.employees.find({"status": "active"}, {"_id": 0}).to_list(2000)}
+            for u in await db.users.find({}, {"_id": 0}).to_list(3000):
+                e = emps.get(u.get("employee_id"))
+                if u["role"] == "employee" and not e:
+                    continue
+                out.append({"key": f"{b['id']}:{u['id']}", "name": u.get("name") or u.get("email", ""), "branch": b["name"],
+                            "role_label": ROLE_LABEL.get(u["role"], u["role"]), "position": pos.get((e or {}).get("position_id"), "")})
+    return out
+
+
+@hub.post("/chat/groups")
+async def hub_group_create(data: HubGroupIn, request: Request):
+    me = await hub_principal(request)
+    if not me["is_owner"]:
+        raise HTTPException(403, "إنشاء المجموعات للمسؤول العام")
+    contacts = {c["key"]: c for c in await hub_chat_contacts()}
+    keys = [k for k in dict.fromkeys(data.member_keys) if k in contacts]
+    if not keys:
+        raise HTTPException(400, "اختر شخصًا واحدًا على الأقل")
+    direct = len(keys) == 1 and not data.name.strip()
+    if direct:
+        ex = await hub_db.hub_groups.find_one({"direct": True, "members": {"$all": [me["key"], keys[0]], "$size": 2}}, {"_id": 0})
+        if ex:
+            return {"id": ex["id"]}
+    name = data.name.strip() or contacts[keys[0]]["name"]
+    now = now_utc()
+    info = {k: {"name": contacts[k]["name"], "branch": contacts[k]["branch"], "role": contacts[k]["role_label"]} for k in keys}
+    info[me["key"]] = {"name": me["name"], "branch": "", "role": "المسؤول العام"}
+    g = {"id": new_id(), "name": name, "direct": direct, "owner_key": me["key"], "members": [me["key"], *keys], "info": info,
+         "unread": {}, "created_at": now, "last_at": now, "last_text": "أُنشئت المحادثة"}
+    await hub_db.hub_groups.insert_one(dict(g))
+    _hub_notify(keys, name, "رسالة جديدة من المسؤول العام", g["id"])
+    return {"id": g["id"]}
+
+
+@hub.get("/chat/groups")
+async def hub_group_list(request: Request):
+    me = await hub_principal(request)
+    items = await hub_db.hub_groups.find({"members": me["key"]}, {"_id": 0}).sort("last_at", -1).to_list(300)
+    def title(g):
+        if g.get("direct") and not me["is_owner"]:
+            return "المسؤول العام"
+        return g["name"]
+    return [{"id": g["id"], "name": title(g), "members": len(g["members"]), "last_text": g.get("last_text", ""), "last_at": _iso(g.get("last_at")),
+             "unread": int((g.get("unread") or {}).get(me["key"], 0)), "direct": bool(g.get("direct"))} for g in items]
+
+
+@hub.get("/chat/groups/{gid}")
+async def hub_group_get(gid: str, request: Request):
+    me = await hub_principal(request)
+    g = await _hub_group(gid, me)
+    rows = await hub_db.hub_messages.find({"group_id": gid}, {"_id": 0}).sort("at", -1).to_list(200)
+    rows.reverse()
+    await hub_db.hub_groups.update_one({"id": gid}, {"$set": {f"unread.{me['key']}": 0}})
+    info = g.get("info") or {}
+    return {"id": gid, "name": ("المسؤول العام" if g.get("direct") and not me["is_owner"] else g["name"]), "can_manage": me["is_owner"],
+            "members": [{"user_id": k, "name": info.get(k, {}).get("name", "—"), "role_label": " · ".join(x for x in (info.get(k, {}).get("role"), info.get(k, {}).get("branch")) if x), "owner": k == g["owner_key"]} for k in g["members"]],
+            "messages": [{"id": m["id"], "mine": m["from"] == me["key"], "from_name": m.get("from_name", ""), "text": m.get("text", ""), "files": m.get("files", []), "at": _iso(m["at"])} for m in rows]}
+
+
+@hub.post("/chat/groups/{gid}/messages")
+async def hub_group_send(gid: str, data: GroupMsgIn, request: Request):
+    me = await hub_principal(request)
+    g = await _hub_group(gid, me)
+    text = data.text.strip()
+    if not text and not data.files:
+        raise HTTPException(400, "اكتب رسالة أو أرفق ملفًا")
+    if len(data.files) > MAX_FILES_PER_MSG:
+        raise HTTPException(400, f"الحد الأقصى {MAX_FILES_PER_MSG} ملفات في الرسالة")
+    metas = []
+    for f in data.files:
+        ext = f.name.rsplit(".", 1)[-1].lower() if "." in f.name else ""
+        if ext in BLOCKED_EXT:
+            raise HTTPException(400, f"نوع الملف غير مسموح: {f.name}")
+        try:
+            raw = base64.b64decode(f.data, validate=True)
+        except (binascii.Error, ValueError):
+            raise HTTPException(400, "ملف غير صالح")
+        if len(raw) > MAX_FILE_BYTES:
+            raise HTTPException(400, f"الملف {f.name} أكبر من 5 ميغابايت")
+        fid = new_id()
+        await hub_db.hub_files.insert_one({"id": fid, "group_id": gid, "name": f.name, "type": f.type, "size": len(raw), "data": f.data})
+        metas.append({"id": fid, "name": f.name, "type": f.type, "size": len(raw)})
+    now = now_utc()
+    await hub_db.hub_messages.insert_one({"id": new_id(), "group_id": gid, "from": me["key"], "from_name": me["name"], "text": text, "files": metas, "at": now})
+    preview = text[:90] or ("📎 " + metas[0]["name"])
+    others = [k for k in g["members"] if k != me["key"]]
+    await hub_db.hub_groups.update_one({"id": gid}, {"$set": {"last_at": now, "last_text": f"{me['name']}: {preview}"}, "$inc": {f"unread.{k}": 1 for k in others}})
+    _hub_notify(others, g["name"], f"{me['name']}: {preview}", gid)
+    return {"ok": True}
+
+
+@hub.get("/chat/groups/{gid}/files/{fid}")
+async def hub_group_file(gid: str, fid: str, request: Request):
+    me = await hub_principal(request)
+    await _hub_group(gid, me)
+    f = await hub_db.hub_files.find_one({"id": fid, "group_id": gid}, {"_id": 0})
+    if not f:
+        raise HTTPException(404, "الملف غير موجود")
+    return f
+
+
+@hub.put("/chat/groups/{gid}/members")
+async def hub_group_members(gid: str, data: GroupMembersIn, _=Depends(owner_only)):
+    g = await hub_db.hub_groups.find_one({"id": gid}, {"_id": 0})
+    if not g:
+        raise HTTPException(404, "المجموعة غير موجودة")
+    contacts = {c["key"]: c for c in await hub_chat_contacts()}
+    add = [k for k in data.add if k in contacts]
+    members = [k for k in dict.fromkeys([*g["members"], *add]) if k not in [x for x in data.remove if x != g["owner_key"]]]
+    info = dict(g.get("info") or {})
+    for k in add:
+        info[k] = {"name": contacts[k]["name"], "branch": contacts[k]["branch"], "role": contacts[k]["role_label"]}
+    await hub_db.hub_groups.update_one({"id": gid}, {"$set": {"members": members, "info": info, "direct": False}})
+    _hub_notify(add, g["name"], "أُضفتَ إلى مجموعة", gid)
+    return {"ok": True}
+
+
+@hub.delete("/chat/groups/{gid}")
+async def hub_group_delete(gid: str, _=Depends(owner_only)):
+    await hub_db.hub_groups.delete_one({"id": gid})
+    await hub_db.hub_messages.delete_many({"group_id": gid})
+    await hub_db.hub_files.delete_many({"group_id": gid})
+    return {"ok": True}
+
+
 @hub.get("/branches")
 async def hub_branches(_=Depends(owner_only)):
     return await hub_db.branches.find({}, {"_id": 0, "db_name": 0}).sort("created_at", 1).to_list(200)

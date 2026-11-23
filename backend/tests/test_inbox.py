@@ -319,3 +319,26 @@ def test_hub_overview_metrics(c):
     t = d["totals"]
     assert {"bonus", "bonus_pct", "bonus_pct_profit", "profit_per_da"} <= set(t)
     assert all("waste_ratio" in b and "profit_per_da" in b for b in d["branches"])
+
+
+def test_hub_chat_cross_branch(c, H):
+    import base64
+    ow = login(c, "owner@company.dz", "Owner@123456")
+    contacts = c.get("/api/hub/chat/contacts", headers=ow).json()
+    emp = next(x for x in contacts if x["name"] == "employee@company.dz" or x["role_label"] == "عامل")
+    r = c.post("/api/hub/chat/groups", json={"member_keys": [emp["key"]]}, headers=ow)
+    assert r.status_code == 200, r.text
+    gid = r.json()["id"]
+    assert c.post("/api/hub/chat/groups", json={"member_keys": [emp["key"]]}, headers=ow).json()["id"] == gid   # لا تتكرر المحادثة المباشرة
+    png = base64.b64encode(b"\x89PNGfake").decode()
+    assert c.post(f"/api/hub/chat/groups/{gid}/messages", json={"text": "مرحبا", "files": [{"name": "a.png", "type": "image/png", "data": png}]}, headers=ow).status_code == 200
+    # العامل في فرعه يرى المحادثة ويردّ
+    lst = c.get("/api/hub/chat/groups", headers=H["emp"]).json()
+    assert lst and lst[0]["name"] == "المسؤول العام" and lst[0]["unread"] == 1
+    g = c.get(f"/api/hub/chat/groups/{gid}", headers=H["emp"]).json()
+    assert g["messages"][0]["files"][0]["name"] == "a.png" and not g["can_manage"]
+    assert c.post(f"/api/hub/chat/groups/{gid}/messages", json={"text": "تم"}, headers=H["emp"]).status_code == 200
+    assert c.get(f"/api/hub/chat/groups/{gid}", headers=ow).json()["messages"][-1]["text"] == "تم"
+    # غير العضو ممنوع، والعامل لا ينشئ
+    assert c.get(f"/api/hub/chat/groups/{gid}", headers=H["insp"]).status_code == 404
+    assert c.post("/api/hub/chat/groups", json={"member_keys": [emp["key"]]}, headers=H["emp"]).status_code == 403

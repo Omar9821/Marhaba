@@ -90,6 +90,7 @@ export default function HubHome() {
             </Row>
           </Card>
 
+          <Btn testID="hub-chat" title="المراسلة العامة — أي عامل أو مجموعة في أي فرع" icon="chatbubbles-outline" onPress={() => router.push("/hubchat" as any)} />
           <Row style={{ gap: S.sm }}>
             <View style={{ flex: 1 }}><Btn testID="hub-manage" title="إدارة الفروع" variant="secondary" icon="settings-outline" onPress={() => router.push("/hub/branches" as any)} /></View>
             <View style={{ flex: 1 }}><Btn testID="hub-import" title="استيراد الحسابات" variant="secondary" icon="cloud-upload-outline" onPress={importTeam} loading={importing} /></View>
