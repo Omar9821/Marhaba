@@ -14,7 +14,7 @@ export default function HubChatList() {
   const q = useApi<G[]>("/hub/chat/groups");
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
-      <Header back title="المراسلة العامة" subtitle="راسل أي عامل أو مسؤول في أي فرع" />
+      <Header title="المراسلة" subtitle="راسل أي عامل أو مسؤول في أي فرع" />
       {q.loading ? <Loading /> : q.error && !q.data ? <ErrorView message={q.error} onRetry={q.refresh} /> : (
         <ScrollView contentContainerStyle={{ padding: S.lg, gap: S.md }} refreshControl={<RefreshControl refreshing={q.refreshing} onRefresh={q.refresh} tintColor={colors.brandPrimary} />}>
           <Btn testID="hubchat-new" title="رسالة / مجموعة جديدة" icon="create-outline" onPress={() => router.push("/hubchat/new" as any)} />

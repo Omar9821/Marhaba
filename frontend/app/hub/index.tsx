@@ -3,14 +3,12 @@ import { useState } from "react";
 import { RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
-import { pickFiles } from "@/src/files";
 import { currentMonth, money, num } from "@/src/format";
 import { useApi } from "@/src/hooks";
 import { useTheme } from "@/src/theme";
 import { BranchStat, HubOverview } from "@/src/types";
-import { Btn, Card, ConfirmSheet, EmptyState, ErrorView, Header, Loading, MonthSwitcher, Pill, ProgressBar, R, Row, S, StatTile, T, useToast } from "@/src/ui";
+import { Btn, Card, EmptyState, ErrorView, Header, Loading, MonthSwitcher, Pill, ProgressBar, R, Row, S, StatTile, T } from "@/src/ui";
 
 const ACT: Record<string, string> = { workshop: "ورشة / إنتاج", commercial: "تجاري", services: "خدمات", mirrors: "مرايا الحمام LED", other: "نشاط آخر" };
 function Metric({ label, value, tone }: { label: string; value: string; tone?: "success" | "warning" | "error" }) {
@@ -30,21 +28,8 @@ export default function HubHome() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { user, logout, enterBranch } = useAuth();
+  const { user, enterBranch } = useAuth();
   const [month, setMonth] = useState(currentMonth());
-  const [confirm, setConfirm] = useState(false);
-  const toast = useToast();
-  const [importing, setImporting] = useState(false);
-  const importTeam = async () => {
-    try {
-      const f = (await pickFiles())[0];
-      if (!f) return;
-      setImporting(true);
-      const r = await api.post("/hub/import-team", { data: f.data });
-      toast(`تم: ${r.admins_created + r.admins_updated} مسيّر، ${r.employees_created + r.employees_updated} موظف، ${r.supervisors} مراقب${r.errors?.length ? ` — أخطاء: ${r.errors.join("، ")}` : ""}`);
-      q.refresh();
-    } catch (e: any) { toast(e?.message || "تعذر الاستيراد", "error"); } finally { setImporting(false); }
-  };
   const q = useApi<HubOverview>(`/hub/overview?month=${month}`);
   const d = q.data;
 
@@ -90,12 +75,6 @@ export default function HubHome() {
             </Row>
           </Card>
 
-          <Btn testID="hub-chat" title="المراسلة العامة" icon="chatbubbles-outline" onPress={() => router.push("/hubchat" as any)} />
-          <Row style={{ gap: S.sm }}>
-            <View style={{ flex: 1 }}><Btn testID="hub-manage" title="إدارة الفروع" variant="secondary" icon="settings-outline" onPress={() => router.push("/hub/branches" as any)} /></View>
-            <View style={{ flex: 1 }}><Btn testID="hub-import" title="استيراد الحسابات" variant="secondary" icon="cloud-upload-outline" onPress={importTeam} loading={importing} /></View>
-          </Row>
-
           <T variant="h3">الفروع</T>
           {d.branches.length === 0 ? <EmptyState icon="business-outline" title="لا توجد فروع" /> : null}
           {d.branches.map((b: BranchStat, i) => {
@@ -124,15 +103,12 @@ export default function HubHome() {
                 {b.best ? <T variant="caption">الأفضل: {b.best.name} ({pct(b.best.q)}){b.worst && b.worst.name !== b.best.name ? ` · الأضعف: ${b.worst.name} (${pct(b.worst.q)})` : ""}</T> : null}
                 <Row style={{ gap: S.sm }}>
                   <View style={{ flex: 1 }}><Btn testID={`hub-enter-${i}`} title="دخول الفرع" icon="enter-outline" variant="outline" onPress={() => enter(b.id)} /></View>
-                  <View style={{ flex: 1 }}><Btn testID={`hub-chat-${i}`} title="المراسلة" icon="chatbubbles-outline" variant="outline" onPress={() => enter(b.id, "/(admin)/inbox?seg=chat")} /></View>
                 </Row>
               </Card>
             );
           })}
-          <Btn testID="hub-logout" title="تسجيل الخروج" variant="ghost" icon="log-out-outline" onPress={() => setConfirm(true)} />
         </ScrollView>
       ) : null}
-      <ConfirmSheet visible={confirm} title="تسجيل الخروج" message="هل تريد تسجيل الخروج؟" confirmLabel="تسجيل الخروج" onClose={() => setConfirm(false)} onConfirm={() => { setConfirm(false); logout(); }} />
     </View>
   );
 }
