@@ -317,5 +317,5 @@ def test_hub_overview_metrics(c):
     ow = login(c, "owner@company.dz", "Owner@123456")
     d = c.get("/api/hub/overview", headers=ow).json()
     t = d["totals"]
-    assert {"bonus", "bonus_pct", "turnover_per_da", "gain_per_da"} <= set(t)
-    assert all("waste_ratio" in b and "turnover_per_da" in b for b in d["branches"])
+    assert {"bonus", "bonus_pct", "bonus_pct_profit", "profit_per_da"} <= set(t)
+    assert all("waste_ratio" in b and "profit_per_da" in b for b in d["branches"])
