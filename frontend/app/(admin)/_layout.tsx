@@ -87,7 +87,7 @@ export default function AdminTabs() {
       <Tabs.Screen name="settings" options={{ title: "الإعدادات", tabBarIcon: icon("settings-outline"), tabBarButtonTestID: "tab-settings" } as any} />
       <Tabs.Screen name="reports" options={{ href: null, title: "التقارير" } as any} />
       <Tabs.Screen name="entry" options={{ href: null, title: "الإدخال" } as any} />
-      <Tabs.Screen name="inbox" options={{ href: showInbox ? undefined : null, title: "الطلبات", tabBarBadge: badge.total > 0 ? badge.total : undefined, tabBarIcon: icon("file-tray-full-outline"), tabBarButtonTestID: "tab-inbox" } as any} />
+      <Tabs.Screen name="inbox" options={{ href: showInbox ? undefined : null, title: "الرسائل", tabBarBadge: badge.total > 0 ? badge.total : undefined, tabBarIcon: icon("file-tray-full-outline"), tabBarButtonTestID: "tab-inbox" } as any} />
       <Tabs.Screen name="announcements" options={{ href: showAnn ? undefined : null, title: "الإعلانات", tabBarIcon: icon("megaphone-outline"), tabBarButtonTestID: "tab-announcements" } as any} />
       <Tabs.Screen name="violations" options={{ href: showVio ? undefined : null, title: "المخالفات", tabBarIcon: icon("warning-outline"), tabBarButtonTestID: "tab-violations" } as any} />
       <Tabs.Screen name="sheet" options={{ href: showSheet ? undefined : null, title: "الأداء", tabBarIcon: icon("grid-outline"), tabBarButtonTestID: "tab-sheet" } as any} />
