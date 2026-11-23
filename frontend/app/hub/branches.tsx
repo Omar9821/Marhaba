@@ -65,7 +65,7 @@ export default function BranchesScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.surfaceSecondary }}>
-      <Header back title="إدارة الفروع" subtitle="كل فرع له بياناته وإعداداته المستقلة" />
+      <Header title="الفروع" subtitle="كل فرع له بياناته وإعداداته المستقلة" />
       {q.loading ? <Loading /> : (
         <KeyboardAwareScrollView bottomOffset={90} keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: S.lg, gap: S.lg, paddingBottom: insets.bottom + S.xxl }}>
           <Card style={{ gap: S.md }} testID="branch-form">
