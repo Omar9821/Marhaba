@@ -342,3 +342,16 @@ def test_hub_chat_cross_branch(c, H):
     # غير العضو ممنوع، والعامل لا ينشئ
     assert c.get(f"/api/hub/chat/groups/{gid}", headers=H["insp"]).status_code == 404
     assert c.post("/api/hub/chat/groups", json={"member_keys": [emp["key"]]}, headers=H["emp"]).status_code == 403
+
+
+def test_edit_archived_branch(c):
+    ow = login(c, "owner@company.dz", "Owner@123456")
+    bid = next(b["id"] for b in c.get("/api/hub/branches", headers=ow).json() if b["id"] != "main")
+    assert c.put(f"/api/hub/branches/{bid}", json={"active": False}, headers=ow).status_code == 200
+    assert c.put(f"/api/hub/branches/{bid}", json={"name": "فرع مؤرشف معدّل", "activity": "services"}, headers=ow).status_code == 200
+    b = next(x for x in c.get("/api/hub/branches", headers=ow).json() if x["id"] == bid)
+    assert b["name"] == "فرع مؤرشف معدّل" and b["activity"] == "services" and not b["active"]
+    # المسؤول العام يدخل الفرع المؤرشف لتعديل بياناته، وفريقه ممنوع
+    assert c.get("/api/employees", headers={**ow, "X-Branch": bid}).status_code == 200
+    assert c.post("/api/auth/login", json={"email": "w.led", "password": "abc128"}).status_code == 401
+    assert c.put(f"/api/hub/branches/{bid}", json={"active": True}, headers=ow).status_code == 200
