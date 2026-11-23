@@ -318,7 +318,8 @@ async def resolve_branch(request: Request) -> None:
     else:
         bid = (payload or {}).get("branch") or "main"
     b = await get_branch(bid)
-    if not b or not b.get("active", True):
+    is_owner = bool(payload and payload.get("owner"))
+    if not b or (not b.get("active", True) and not is_owner):   # المسؤول العام يدخل الفروع المعطّلة لتعديلها
         raise HTTPException(403, "هذا الفرع غير متاح")
     _branch_db.set(b["db_name"])
 
@@ -2039,6 +2040,7 @@ class BranchIn(BaseModel):
 class BranchUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=80)
     active: Optional[bool] = None
+    activity: Optional[Literal["workshop", "commercial", "services", "mirrors", "other"]] = None   # تصنيف فقط، لا يعيد زرع الإعدادات
 
 
 async def init_branch_db(activity: str, admin: Optional[tuple] = None, inspector: Optional[tuple] = None) -> None:
@@ -2416,6 +2418,10 @@ async def hub_create_branch(data: BranchIn, _=Depends(owner_only)):
 @hub.put("/branches/{bid}")
 async def hub_update_branch(bid: str, data: BranchUpdate, _=Depends(owner_only)):
     upd = {k: v for k, v in data.model_dump().items() if v is not None}
+    if "name" in upd:
+        upd["name"] = upd["name"].strip()
+        if not upd["name"]:
+            raise HTTPException(400, "اسم الفرع فارغ")
     if bid == "main" and upd.get("active") is False:
         raise HTTPException(400, "لا يمكن تعطيل الفرع الرئيسي")
     res = await hub_db.branches.update_one({"id": bid}, {"$set": upd})
