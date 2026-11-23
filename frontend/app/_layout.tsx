@@ -23,7 +23,8 @@ try {
   I18nManager.forceRTL(false);
 } catch {}
 
-const ADMIN_AREAS = ["(admin)", "settings", "employee", "hub"];
+const ADMIN_AREAS = ["(admin)", "settings", "employee", "hub", "hubchat"];
+const OWNER_AREAS = ["hub", "hubchat", "group"];
 
 function Gate() {
   const { user, loading } = useAuth();
@@ -39,7 +40,7 @@ function Gate() {
       return;
     }
     if (user.role === "owner") { // المسؤول العام خارج أي فرع: البوابة العامة فقط
-      if (first !== "hub") router.replace("/hub" as any);
+      if (!first || !OWNER_AREAS.includes(first)) router.replace("/hub" as any);
       return;
     }
     const staff = user.role === "admin" || user.role === "inspector";

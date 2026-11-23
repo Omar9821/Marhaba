@@ -90,7 +90,7 @@ export default function HubHome() {
             </Row>
           </Card>
 
-          <Btn testID="hub-chat" title="المراسلة العامة — أي عامل أو مجموعة في أي فرع" icon="chatbubbles-outline" onPress={() => router.push("/hubchat" as any)} />
+          <Btn testID="hub-chat" title="المراسلة العامة" icon="chatbubbles-outline" onPress={() => router.push("/hubchat" as any)} />
           <Row style={{ gap: S.sm }}>
             <View style={{ flex: 1 }}><Btn testID="hub-manage" title="إدارة الفروع" variant="secondary" icon="settings-outline" onPress={() => router.push("/hub/branches" as any)} /></View>
             <View style={{ flex: 1 }}><Btn testID="hub-import" title="استيراد الحسابات" variant="secondary" icon="cloud-upload-outline" onPress={importTeam} loading={importing} /></View>
@@ -124,7 +124,7 @@ export default function HubHome() {
                 {b.best ? <T variant="caption">الأفضل: {b.best.name} ({pct(b.best.q)}){b.worst && b.worst.name !== b.best.name ? ` · الأضعف: ${b.worst.name} (${pct(b.worst.q)})` : ""}</T> : null}
                 <Row style={{ gap: S.sm }}>
                   <View style={{ flex: 1 }}><Btn testID={`hub-enter-${i}`} title="دخول الفرع" icon="enter-outline" variant="outline" onPress={() => enter(b.id)} /></View>
-                  <View style={{ flex: 1 }}><Btn testID={`hub-chat-${i}`} title="المراسلة" icon="chatbubbles-outline" variant="outline" onPress={() => enter(b.id, "/(admin)/inbox")} /></View>
+                  <View style={{ flex: 1 }}><Btn testID={`hub-chat-${i}`} title="المراسلة" icon="chatbubbles-outline" variant="outline" onPress={() => enter(b.id, "/(admin)/inbox?seg=chat")} /></View>
                 </Row>
               </Card>
             );

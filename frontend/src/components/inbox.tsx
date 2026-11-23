@@ -1,4 +1,4 @@
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import { Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -26,7 +26,8 @@ export function InboxView({ staff }: { staff: boolean }) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const [seg, setSeg] = useState<"requests" | "chat">("requests");
+  const params = useLocalSearchParams<{ seg?: string }>();
+  const [seg, setSeg] = useState<"requests" | "chat">(params.seg === "chat" ? "chat" : "requests");
   const [filter, setFilter] = useState<Filter>("all");
   const reqs = useApi<RequestSummary[]>("/requests");
   const chats = useApi<ChatItem[]>("/chat");
