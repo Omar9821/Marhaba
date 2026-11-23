@@ -2239,6 +2239,15 @@ async def email_in_any_branch(email: str) -> bool:
     return False
 
 
+def _prev_month(m: str) -> str:
+    y, mo = int(m[:4]), int(m[5:])
+    return f"{y - 1}-12" if mo == 1 else f"{y}-{mo - 1:02d}"
+
+
+def _ratio(a, b):
+    return (a / b) if (a is not None and b) else None
+
+
 @hub.get("/overview")
 async def hub_overview(month: Optional[str] = None, _=Depends(owner_only)):
     month = month or current_month()
@@ -2247,8 +2256,24 @@ async def hub_overview(month: Optional[str] = None, _=Depends(owner_only)):
         with use_branch(b["db_name"]):
             res = await build_sheet(month)
             vio_days = await db.violation_logs.distinct("date", {"month": month})
-            out.append({"id": b["id"], "name": b["name"], "activity": b["activity"], "inspections": len(vio_days), **sheet_headline(res)})
-    tot = {k: sum((b.get(k) or 0) for b in out) for k in ("employees", "turnover", "payable", "gap", "violations", "losses")}
+            head = sheet_headline(res)
+            # المنح الموزعة بحسب النظام المعتمد إن عُيّنت الأدوار، وإلا بحسب جدول الأداء
+            bm = await bonus_month_result(month)
+            bonus = bm["total_payable"] if bm["rows"] else head["payable"]
+            inp = await db.bonus_inputs.find_one({"month": month}, {"_id": 0}) or {}
+            waste = bm["waste_ratio"] if (inp.get("glass_consumed") or 0) > 0 else None
+            turnover = head["turnover"] if head["turnover"] is not None else (bm["inputs"].get("turnover") or None)
+            prev = await db.sheet_months.find_one({"month": _prev_month(month)}, {"_id": 0})
+            gain = (turnover - prev["turnover"]) if (turnover is not None and prev and prev.get("turnover") is not None) else None
+            out.append({"id": b["id"], "name": b["name"], "activity": b["activity"], "inspections": len(vio_days), **head,
+                        "turnover": turnover, "bonus": bonus, "bonus_pct": _ratio(bonus, turnover), "waste_ratio": waste,
+                        "turnover_per_da": _ratio(turnover, bonus), "turnover_gain": gain, "gain_per_da": _ratio(gain, bonus)})
+    tot = {k: sum((b.get(k) or 0) for b in out) for k in ("employees", "turnover", "payable", "gap", "violations", "losses", "bonus")}
+    tot["bonus_pct"] = _ratio(tot["bonus"], tot["turnover"])
+    tot["turnover_per_da"] = _ratio(tot["turnover"], tot["bonus"])
+    gains = [b["turnover_gain"] for b in out if b["turnover_gain"] is not None]
+    tot["turnover_gain"] = sum(gains) if gains else None
+    tot["gain_per_da"] = _ratio(tot["turnover_gain"], tot["bonus"])
     qs = [b["avg_q"] for b in out if b["avg_q"] is not None]
     tot["avg_q"] = sum(qs) / len(qs) if qs else None
     return {"month": month, "branches": out, "totals": tot}
